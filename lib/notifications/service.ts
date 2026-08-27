@@ -1,0 +1,249 @@
+import 'server-only';
+
+import { and, desc, eq, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import {
+  familyMembers,
+  notifications,
+  users,
+  type Notification,
+  type NotificationType,
+} from '@/lib/db/schema';
+import { requireMembership } from '@/lib/permissions/family';
+import { Errors } from '@/lib/api/errors';
+import { publishEvent } from '@/lib/realtime/publish';
+
+/**
+ * Notifications.
+ *
+ * One row per recipient rather than one row fanned out at read time. That
+ * costs a little storage and buys three things worth more: read state is
+ * per-person, a member who joins later does not retroactively see old alerts,
+ * and removing somebody from a family stops their notifications by cascade
+ * rather than by remembering to filter.
+ *
+ * Payloads never contain coordinates. "Sarah arrived at School" is what the
+ * family needs; a position would bypass the location visibility rule, since
+ * notifications are not filtered through it.
+ */
+
+export interface NotificationView {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  data: Record<string, unknown> | null;
+  readAt: Date | null;
+  createdAt: Date;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Writing                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export interface NotifyInput {
+  familyId: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  data?: Record<string, unknown>;
+  /** Recipients. Defaults to every member except `exclude`. */
+  recipientIds?: string[];
+  /** Usually the person who caused the event — they don't need telling. */
+  exclude?: string;
+}
+
+/**
+ * Creates notifications and publishes a realtime hint.
+ *
+ * Never throws into the caller's path: an alert failing to send must not roll
+ * back the arrival, message or SOS that triggered it.
+ */
+export async function notifyFamily(input: NotifyInput): Promise<void> {
+  try {
+    let recipients = input.recipientIds;
+
+    if (!recipients) {
+      const rows = await db
+        .select({ userId: familyMembers.userId })
+        .from(familyMembers)
+        .where(
+          input.exclude
+            ? and(
+                eq(familyMembers.familyId, input.familyId),
+                ne(familyMembers.userId, input.exclude),
+              )
+            : eq(familyMembers.familyId, input.familyId),
+        );
+
+      recipients = rows.map((r) => r.userId);
+    }
+
+    if (recipients.length === 0) return;
+
+    await db.insert(notifications).values(
+      recipients.map((userId) => ({
+        userId,
+        familyId: input.familyId,
+        type: input.type,
+        title: input.title,
+        message: input.message,
+        data: input.data ?? null,
+      })),
+    );
+
+    await publishEvent(input.familyId, 'notification');
+  } catch (error) {
+    console.error('[notifications] delivery failed', error);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reading                                                                     */
+/* -------------------------------------------------------------------------- */
+
+export async function listNotifications(
+  userId: string,
+  familyId: string,
+  limit = 50,
+): Promise<NotificationView[]> {
+  await requireMembership(userId, familyId);
+
+  return db
+    .select({
+      id: notifications.id,
+      type: notifications.type,
+      title: notifications.title,
+      message: notifications.message,
+      data: notifications.data,
+      readAt: notifications.readAt,
+      createdAt: notifications.createdAt,
+    })
+    .from(notifications)
+    // Scoped to the caller: there is no parameter for whose notifications to
+    // read, so another member's cannot be requested.
+    .where(and(eq(notifications.userId, userId), eq(notifications.familyId, familyId)))
+    .orderBy(desc(notifications.createdAt))
+    .limit(Math.min(limit, 100));
+}
+
+export async function countUnread(userId: string, familyId: string): Promise<number> {
+  return db.$count(
+    notifications,
+    and(
+      eq(notifications.userId, userId),
+      eq(notifications.familyId, familyId),
+      isNull(notifications.readAt),
+    ),
+  );
+}
+
+/** Unread counts across every family the user belongs to, in one query. */
+export async function countUnreadAllFamilies(userId: string): Promise<number> {
+  return db.$count(
+    notifications,
+    and(eq(notifications.userId, userId), isNull(notifications.readAt)),
+  );
+}
+
+export async function markRead(
+  userId: string,
+  familyId: string,
+  notificationIds?: string[],
+): Promise<number> {
+  await requireMembership(userId, familyId);
+
+  const scope = and(
+    // The userId predicate is what makes this safe: a caller supplying
+    // somebody else's notification ids updates zero rows.
+    eq(notifications.userId, userId),
+    eq(notifications.familyId, familyId),
+    isNull(notifications.readAt),
+    ...(notificationIds && notificationIds.length > 0
+      ? [inArray(notifications.id, notificationIds)]
+      : []),
+  );
+
+  const updated = await db
+    .update(notifications)
+    .set({ readAt: new Date() })
+    .where(scope)
+    .returning({ id: notifications.id });
+
+  return updated.length;
+}
+
+/**
+ * Housekeeping: drop read notifications older than the retention window.
+ *
+ * Not wired to a scheduler in the MVP — it exists so the growth path is
+ * obvious and the query is already written and tested.
+ */
+export async function pruneOldNotifications(olderThanDays = 90): Promise<number> {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+  const deleted = await db
+    .delete(notifications)
+    .where(and(lt(notifications.createdAt, cutoff), sql`${notifications.readAt} is not null`))
+    .returning({ id: notifications.id });
+
+  return deleted.length;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Convenience builders                                                        */
+/* -------------------------------------------------------------------------- */
+
+export async function notifyPlaceEvent(
+  familyId: string,
+  actorId: string,
+  actorName: string,
+  placeName: string,
+  type: 'arrived' | 'left',
+  placeId: string,
+): Promise<void> {
+  await notifyFamily({
+    familyId,
+    type: type === 'arrived' ? 'ARRIVED_PLACE' : 'LEFT_PLACE',
+    title: type === 'arrived' ? `${actorName} arrived` : `${actorName} left`,
+    message:
+      type === 'arrived'
+        ? `${actorName} arrived at ${placeName}.`
+        : `${actorName} left ${placeName}.`,
+    // A place id, not a position.
+    data: { placeId, actorId },
+    exclude: actorId,
+  });
+}
+
+export async function notifySharingChanged(
+  familyId: string,
+  actorId: string,
+  actorName: string,
+  enabled: boolean,
+): Promise<void> {
+  await notifyFamily({
+    familyId,
+    type: enabled ? 'LOCATION_ENABLED' : 'LOCATION_DISABLED',
+    title: enabled ? `${actorName} is sharing location` : `${actorName} stopped sharing`,
+    message: enabled
+      ? `${actorName} turned on location sharing with this family.`
+      : `${actorName} turned off location sharing with this family.`,
+    data: { actorId },
+    exclude: actorId,
+  });
+}
+
+/** Fetches a display name once, for use in notification copy. */
+export async function displayName(userId: string): Promise<string> {
+  const [row] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  if (!row) throw Errors.notFound('That user');
+  return row.name;
+}
+
+export type { Notification };

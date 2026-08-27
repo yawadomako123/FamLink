@@ -14,6 +14,8 @@ import { requireMembership } from '@/lib/permissions/family';
 import { canViewLocation } from '@/lib/permissions/location-visibility';
 import { Errors } from '@/lib/api/errors';
 import { evaluateAndRecordGeofences, type DetectedTransition } from '@/lib/places/service';
+import { displayName, notifyPlaceEvent, notifySharingChanged } from '@/lib/notifications/service';
+import { publishEvent } from '@/lib/realtime/publish';
 import type { LocationUpdateInput } from '@/lib/validation/location';
 
 /**
@@ -146,6 +148,25 @@ export async function recordLocation(
     console.error('[location] geofence evaluation failed', error);
   }
 
+  if (transitions.length > 0) {
+    const name = await displayName(userId).catch(() => 'A family member');
+
+    for (const transition of transitions) {
+      await notifyPlaceEvent(
+        familyId,
+        userId,
+        name,
+        transition.placeName,
+        transition.type,
+        transition.placeId,
+      );
+    }
+  }
+
+  // A hint only — listeners re-fetch through the authorized endpoint, so the
+  // visibility rule is applied per viewer rather than trusted here.
+  await publishEvent(familyId, 'locations');
+
   return { recordedAt, transitions };
 }
 
@@ -191,6 +212,20 @@ export async function updateSharingSettings(
         and(eq(currentLocations.userId, userId), eq(currentLocations.familyId, familyId)),
       );
   }
+
+  /*
+   * Turning sharing on or off is worth telling the family about — it changes
+   * what they can see, and a silent change would be the kind of surprise
+   * FamLink is meant to avoid. Visibility changes are deliberately NOT
+   * announced: "I am now hidden from you" is not an announcement anyone should
+   * be forced to make.
+   */
+  if (changes.state === 'sharing' || changes.state === 'off') {
+    const name = await displayName(userId).catch(() => 'A family member');
+    await notifySharingChanged(familyId, userId, name, changes.state === 'sharing');
+  }
+
+  await publishEvent(familyId, 'locations');
 
   return {
     state: updated.locationSharingState,
