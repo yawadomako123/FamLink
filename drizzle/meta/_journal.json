@@ -15,6 +15,13 @@
       "when": 1787801351636,
       "tag": "0001_hash_only_invitation_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787833397441,
+      "tag": "0002_settings_calls_checkins",
+      "breakpoints": true
     }
   ]
 }

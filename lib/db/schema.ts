@@ -67,6 +67,21 @@ export const placeEventType = pgEnum('place_event_type', ['arrived', 'left']);
 
 export const emergencyStatus = pgEnum('emergency_status', ['active', 'resolved', 'cancelled']);
 
+export const callKind = pgEnum('call_kind', ['audio', 'video']);
+
+export const callStatus = pgEnum('call_status', [
+  'ringing',
+  'active',
+  'ended',
+  'missed',
+  'declined',
+]);
+
+export const checkInStatus = pgEnum('check_in_status', ['pending', 'answered', 'expired']);
+
+/** How a member answered a check-in. Coarse on purpose — not a mood tracker. */
+export const checkInReply = pgEnum('check_in_reply', ['ok', 'need_help']);
+
 /* ========================================================================== */
 /* Authentication (Better Auth owns the shape of these four tables)            */
 /* ========================================================================== */
@@ -188,6 +203,19 @@ export const familyMembers = pgTable(
     isCharging: boolean('is_charging'),
     batteryUpdatedAt: timestamp('battery_updated_at', { withTimezone: true }),
     lastActiveAt: timestamp('last_active_at', { withTimezone: true }),
+
+    /**
+     * Timed sharing. When set, sharing reverts to `off` once this passes —
+     * enforced on read as well as by a sweep, so an expired window cannot
+     * leak a position merely because no cleanup has run yet.
+     */
+    sharingExpiresAt: timestamp('sharing_expires_at', { withTimezone: true }),
+
+    /**
+     * Suppresses repeat low-battery alerts. Without it, every location update
+     * from a phone sitting on 12% would notify the whole family again.
+     */
+    batteryAlertedAt: timestamp('battery_alerted_at', { withTimezone: true }),
   },
   (t) => [
     uniqueIndex('family_members_family_user_key').on(t.familyId, t.userId),
@@ -479,6 +507,189 @@ export const messageReads = pgTable(
 );
 
 /* ========================================================================== */
+/* Notification preferences                                                    */
+/* ========================================================================== */
+
+/**
+ * Per member, per family.
+ *
+ * An absent row means "everything on", so a member never misses an alert
+ * because a preferences row was not created for them.
+ */
+export const notificationPreferences = pgTable(
+  'notification_preferences',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    familyId: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+
+    arrivals: boolean('arrivals').notNull().default(true),
+    departures: boolean('departures').notNull().default(true),
+    sharingChanges: boolean('sharing_changes').notNull().default(true),
+    lowBattery: boolean('low_battery').notNull().default(true),
+    chatMessages: boolean('chat_messages').notNull().default(true),
+    checkIns: boolean('check_ins').notNull().default(true),
+
+    /*
+     * SOS is deliberately absent, and must stay absent. An emergency alert is
+     * the one thing nobody may opt out of receiving — a family where somebody
+     * has muted the SOS is not a safety net. Quiet hours do not silence it
+     * either.
+     */
+
+    /** Quiet hours as minutes past local midnight. Null disables them. */
+    quietHoursStart: smallint('quiet_hours_start'),
+    quietHoursEnd: smallint('quiet_hours_end'),
+
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.familyId] })],
+);
+
+/* ========================================================================== */
+/* Calls                                                                       */
+/* ========================================================================== */
+
+/**
+ * A call session.
+ *
+ * Media never touches the server — WebRTC carries audio and video peer to
+ * peer — so these rows are purely coordination: who is ringing whom, and who
+ * joined.
+ */
+export const calls = pgTable(
+  'calls',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    familyId: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+    initiatorId: text('initiator_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: callKind('kind').notNull(),
+    status: callStatus('status').notNull().default('ringing'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('calls_family_started_idx').on(t.familyId, t.startedAt.desc()),
+    index('calls_live_idx')
+      .on(t.familyId)
+      .where(sql`status in ('ringing', 'active')`),
+  ],
+);
+
+export const callParticipants = pgTable(
+  'call_participants',
+  {
+    callId: uuid('call_id')
+      .notNull()
+      .references(() => calls.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    joinedAt: timestamp('joined_at', { withTimezone: true }),
+    leftAt: timestamp('left_at', { withTimezone: true }),
+  },
+  (t) => [primaryKey({ columns: [t.callId, t.userId] })],
+);
+
+/**
+ * WebRTC signalling: offers, answers and ICE candidates.
+ *
+ * Persisted rather than held in memory because serverless instances share no
+ * state — a peer's answer may reach a different instance than the one that
+ * handled the offer. Rows are short-lived and swept when a call ends.
+ */
+export const callSignals = pgTable(
+  'call_signals',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    callId: uuid('call_id')
+      .notNull()
+      .references(() => calls.id, { onDelete: 'cascade' }),
+    fromUserId: text('from_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** Null addresses every other participant. */
+    toUserId: text('to_user_id').references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('call_signals_delivery_idx').on(t.callId, t.toUserId, t.id)],
+);
+
+/* ========================================================================== */
+/* Check-ins                                                                   */
+/* ========================================================================== */
+
+/**
+ * "Are you OK?" — asked of a person, answered in one tap.
+ *
+ * Deliberately not a location request. It asks somebody a question; their
+ * sharing settings are untouched by it, and attaching a position to the reply
+ * is their choice.
+ */
+export const checkInRequests = pgTable(
+  'check_in_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    familyId: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+    requesterId: text('requester_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetId: text('target_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    note: text('note'),
+    status: checkInStatus('status').notNull().default('pending'),
+    reply: checkInReply('reply'),
+    /**
+     * Optional one-off disclosure attached to a reply. Never changes the
+     * responder's standing sharing setting.
+     */
+    replyLatitude: doublePrecision('reply_latitude'),
+    replyLongitude: doublePrecision('reply_longitude'),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('check_ins_target_idx').on(t.targetId, t.createdAt.desc()),
+    index('check_ins_family_idx').on(t.familyId, t.createdAt.desc()),
+  ],
+);
+
+/* ========================================================================== */
+/* Message reactions                                                           */
+/* ========================================================================== */
+
+export const messageReactions = pgTable(
+  'message_reactions',
+  {
+    messageId: uuid('message_id')
+      .notNull()
+      .references(() => messages.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** A single emoji, validated at the boundary. */
+    emoji: text('emoji').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  // One reaction per person per message; a second replaces the first.
+  (t) => [primaryKey({ columns: [t.messageId, t.userId] })],
+);
+
+/* ========================================================================== */
 /* Relations                                                                   */
 /* ========================================================================== */
 
@@ -529,6 +740,15 @@ export type PlaceEvent = typeof placeEvents.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type EmergencyEvent = typeof emergencyEvents.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+export type NotificationPreferences = typeof notificationPreferences.$inferSelect;
+export type Call = typeof calls.$inferSelect;
+export type CallSignal = typeof callSignals.$inferSelect;
+export type CheckInRequest = typeof checkInRequests.$inferSelect;
+export type MessageReaction = typeof messageReactions.$inferSelect;
+
+export type CallKind = (typeof callKind.enumValues)[number];
+export type CallStatus = (typeof callStatus.enumValues)[number];
+export type CheckInReplyValue = (typeof checkInReply.enumValues)[number];
 
 export type FamilyRole = (typeof familyRole.enumValues)[number];
 export type LocationSharingState = (typeof locationSharingState.enumValues)[number];
