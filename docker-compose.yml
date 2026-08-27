@@ -1,0 +1,26 @@
+# Local development database.
+#
+# FamLink targets Neon Postgres in production, but Neon is standard Postgres,
+# so this container is a faithful local stand-in. Both the pooled and unpooled
+# connection strings point here in development; on Neon they differ (see README).
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: famlink-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: famlink
+      POSTGRES_PASSWORD: famlink_dev_password
+      POSTGRES_DB: famlink
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U famlink -d famlink']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
