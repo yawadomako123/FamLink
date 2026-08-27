@@ -5,6 +5,7 @@ import { Mic, MicOff, PhoneOff, Video, VideoOff, Loader2 } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Alert } from '@/components/ui/feedback';
 import { useCall, type RemoteParticipant } from '@/hooks/useCall';
+import { useRingtone } from '@/hooks/useRingtone';
 import type { IceConfig } from '@/lib/calls/ice';
 import { cn } from '@/lib/utils';
 import type { CallKind } from '@/lib/db/schema';
@@ -52,6 +53,9 @@ export function CallStage({
     toggleCamera,
     hangUp,
   } = useCall({ familyId, callId, kind, selfId, peerIds, ice, active: true });
+
+  const isConnecting = phase === 'requesting-media' || phase === 'connecting';
+  useRingtone('outgoing', isConnecting);
 
   React.useEffect(() => {
     if (phase === 'ended') onEnded();
@@ -188,8 +192,11 @@ function RemoteTile({ remote, name }: { remote: RemoteParticipant; name: string 
 
   React.useEffect(() => {
     const el = ref.current;
-    if (el && el.srcObject !== remote.stream) el.srcObject = remote.stream;
-  }, [remote.stream]);
+    if (el) {
+      if (el.srcObject !== remote.stream) el.srcObject = remote.stream;
+      el.muted = isMuted; // Hard mute the element based on the signal
+    }
+  }, [remote.stream, isMuted]);
 
   const hasVideo = remote.cameraEnabled && remote.stream.getVideoTracks().length > 0;
   const connecting = remote.connectionState !== 'connected';

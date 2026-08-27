@@ -5,6 +5,7 @@ import { Phone, PhoneOff, Video } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { useRealtime } from '@/hooks/useRealtime';
+import { useRingtone } from '@/hooks/useRingtone';
 import { api, errorMessage } from '@/lib/api/client';
 import type { IceConfig } from '@/lib/calls/ice';
 import type { CallKind } from '@/lib/db/schema';
@@ -135,6 +136,7 @@ export function CallManager({
 
   // Being rung, or a call is running that this member has not joined.
   const isRinging = call.status === 'ringing';
+  useRingtone('incoming', isRinging);
 
   return (
     <div

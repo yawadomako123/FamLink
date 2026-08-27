@@ -179,6 +179,13 @@ export function useCall({
         if (state === 'connected') {
           setPhase('connected');
           setError(null);
+          
+          // Sync our current media state to this specific peer now that they've connected
+          if (localStreamRef.current) {
+            const cam = localStreamRef.current.getVideoTracks()[0]?.enabled ?? false;
+            const mic = localStreamRef.current.getAudioTracks()[0]?.enabled ?? false;
+            void postSignal(peerId, 'media-state', { camera: cam, mic });
+          }
         }
 
         /*
@@ -416,21 +423,29 @@ export function useCall({
   }, [familyId, callId, teardown]);
 
   const toggleMic = React.useCallback(() => {
-    const micTrack = localStreamRef.current?.getAudioTracks()[0];
-    const camTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (!micTrack) return;
-    micTrack.enabled = !micTrack.enabled;
-    setMicEnabled(micTrack.enabled);
-    broadcastSignal('media-state', { camera: camTrack?.enabled ?? false, mic: micTrack.enabled });
+    if (!localStreamRef.current) return;
+    const audioTracks = localStreamRef.current.getAudioTracks();
+    if (audioTracks.length === 0) return;
+
+    const newState = !audioTracks[0].enabled;
+    audioTracks.forEach((t) => (t.enabled = newState));
+    setMicEnabled(newState);
+
+    const camEnabled = localStreamRef.current.getVideoTracks()[0]?.enabled ?? false;
+    broadcastSignal('media-state', { camera: camEnabled, mic: newState });
   }, [broadcastSignal]);
 
   const toggleCamera = React.useCallback(() => {
-    const micTrack = localStreamRef.current?.getAudioTracks()[0];
-    const camTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (!camTrack) return;
-    camTrack.enabled = !camTrack.enabled;
-    setCameraEnabled(camTrack.enabled);
-    broadcastSignal('media-state', { camera: camTrack.enabled, mic: micTrack?.enabled ?? false });
+    if (!localStreamRef.current) return;
+    const videoTracks = localStreamRef.current.getVideoTracks();
+    if (videoTracks.length === 0) return;
+
+    const newState = !videoTracks[0].enabled;
+    videoTracks.forEach((t) => (t.enabled = newState));
+    setCameraEnabled(newState);
+
+    const micEnabled = localStreamRef.current.getAudioTracks()[0]?.enabled ?? false;
+    broadcastSignal('media-state', { camera: newState, mic: micEnabled });
   }, [broadcastSignal]);
 
   return {
