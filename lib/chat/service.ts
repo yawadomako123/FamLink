@@ -1,8 +1,14 @@
 import 'server-only';
 
-import { and, asc, desc, eq, gt, isNull, lt, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { familyMembers, messageReads, messages, users } from '@/lib/db/schema';
+import {
+  familyMembers,
+  messageReactions,
+  messageReads,
+  messages,
+  users,
+} from '@/lib/db/schema';
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
@@ -197,6 +203,131 @@ export async function deleteMessage(
     .where(and(eq(messages.id, messageId), eq(messages.familyId, familyId)));
 
   await publishEvent(familyId, 'message');
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reactions                                                                   */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The reactions FamLink offers.
+ *
+ * A closed set rather than a free-text emoji field. It keeps the data
+ * predictable, avoids storing arbitrary user input that has to be sanitised
+ * everywhere it renders, and sidesteps a family app becoming a venue for
+ * whatever emoji somebody felt like pasting.
+ */
+export const ALLOWED_REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
+export type Reaction = (typeof ALLOWED_REACTIONS)[number];
+
+export function isAllowedReaction(value: string): value is Reaction {
+  return (ALLOWED_REACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * Adds or replaces this member's reaction to a message.
+ *
+ * Sending the same emoji again removes it, which is what every chat app people
+ * already use does.
+ */
+export async function reactToMessage(
+  userId: string,
+  familyId: string,
+  messageId: string,
+  emoji: string,
+): Promise<void> {
+  await requireMembership(userId, familyId);
+
+  if (!isAllowedReaction(emoji)) {
+    throw Errors.badRequest('That reaction is not available.');
+  }
+
+  // Scoped by family so a message id from elsewhere cannot be reacted to.
+  const [message] = await db
+    .select({ id: messages.id })
+    .from(messages)
+    .where(and(eq(messages.id, messageId), eq(messages.familyId, familyId)))
+    .limit(1);
+
+  if (!message) throw Errors.notFound('That message');
+
+  const [existing] = await db
+    .select({ emoji: messageReactions.emoji })
+    .from(messageReactions)
+    .where(
+      and(eq(messageReactions.messageId, messageId), eq(messageReactions.userId, userId)),
+    )
+    .limit(1);
+
+  if (existing?.emoji === emoji) {
+    await db
+      .delete(messageReactions)
+      .where(
+        and(eq(messageReactions.messageId, messageId), eq(messageReactions.userId, userId)),
+      );
+  } else {
+    await db
+      .insert(messageReactions)
+      .values({ messageId, userId, emoji })
+      .onConflictDoUpdate({
+        target: [messageReactions.messageId, messageReactions.userId],
+        set: { emoji, createdAt: new Date() },
+      });
+  }
+
+  await publishEvent(familyId, 'message');
+}
+
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  userIds: string[];
+}
+
+/** Reactions for a set of messages, grouped by message then emoji. */
+export async function getReactions(
+  userId: string,
+  familyId: string,
+  messageIds: string[],
+): Promise<Map<string, ReactionSummary[]>> {
+  await requireMembership(userId, familyId);
+
+  if (messageIds.length === 0) return new Map();
+
+  const rows = await db
+    .select({
+      messageId: messageReactions.messageId,
+      userId: messageReactions.userId,
+      emoji: messageReactions.emoji,
+    })
+    .from(messageReactions)
+    .innerJoin(messages, eq(messages.id, messageReactions.messageId))
+    .where(
+      and(
+        eq(messages.familyId, familyId),
+        inArray(messageReactions.messageId, messageIds),
+      ),
+    );
+
+  const byMessage = new Map<string, Map<string, ReactionSummary>>();
+
+  for (const row of rows) {
+    const forMessage = byMessage.get(row.messageId) ?? new Map();
+    const summary = forMessage.get(row.emoji) ?? { emoji: row.emoji, count: 0, userIds: [] };
+
+    summary.count += 1;
+    summary.userIds.push(row.userId);
+
+    forMessage.set(row.emoji, summary);
+    byMessage.set(row.messageId, forMessage);
+  }
+
+  return new Map(
+    [...byMessage.entries()].map(([messageId, emojiMap]) => [
+      messageId,
+      [...emojiMap.values()].sort((a, b) => b.count - a.count),
+    ]),
+  );
 }
 
 /* -------------------------------------------------------------------------- */
