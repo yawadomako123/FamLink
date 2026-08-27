@@ -1,22 +1,60 @@
 import type { Metadata } from 'next';
-import { Map } from 'lucide-react';
+import Link from 'next/link';
+import { Users } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
-import { PhasePlaceholder } from '@/components/layout/phase-placeholder';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/feedback';
+import { MapView } from '@/components/map/map-view';
 import { requireSession } from '@/lib/auth/session';
 import { resolveCurrentFamily } from '@/lib/families/current';
+import { listFamilyMembers } from '@/lib/families/queries';
 
 export const metadata: Metadata = { title: 'Map' };
 
-export default async function Page() {
+export default async function MapPage() {
   const session = await requireSession('/map');
   const { current } = await resolveCurrentFamily(session.user.id);
 
+  if (!current) {
+    return (
+      <AppShell user={session.user} title="Map">
+        <div className="px-4 md:px-6 py-6 max-w-2xl">
+          <Card>
+            <EmptyState
+              icon={Users}
+              title="No family map yet"
+              description="Create or join a family, then everyone who chooses to share will appear here."
+              action={
+                <Link href="/family">
+                  <Button>Set up a family</Button>
+                </Link>
+              }
+            />
+          </Card>
+        </div>
+      </AppShell>
+    );
+  }
+
+  /*
+   * Names are fetched server-side so the member list can identify people whose
+   * *location* is withheld. Deliberately separate from the locations endpoint:
+   * knowing who is in your family is not the same permission as knowing where
+   * they are, and conflating the two would mean the map's response had to carry
+   * identities for people it must not locate.
+   */
+  const members = await listFamilyMembers(session.user.id, current.id);
+  const memberNames = Object.fromEntries(
+    members.map((m) => [m.userId, { name: m.name, image: m.image }]),
+  );
+
   return (
-    <AppShell user={session.user} familyName={current?.name} title="Map">
-      <PhasePlaceholder
-        icon={Map}
-        title="The family map arrives in phase 4"
-        description="It needs location sharing, which is being built in phase 3. Everyone who opts in will appear here."
+    <AppShell user={session.user} familyName={current.name} title="Map" fullBleed>
+      <MapView
+        familyId={current.id}
+        familyName={current.name}
+        memberNames={memberNames}
       />
     </AppShell>
   );
