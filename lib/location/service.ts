@@ -23,7 +23,8 @@ import type { LocationUpdateInput } from '@/lib/validation/location';
  * viewer and the target member through `canViewLocation`.
  */
 
-export interface MemberLocation {
+/** Server-side shape, before JSON serialisation turns dates into strings. */
+export interface MemberLocationRecord {
   userId: string;
   name: string;
   image: string | null;
@@ -37,7 +38,7 @@ export interface MemberLocation {
 
 export interface FamilyLocationsResult {
   /** Members whose location the viewer is allowed to see. */
-  locations: MemberLocation[];
+  locations: MemberLocationRecord[];
   /**
    * Members who are in the family but whose location is withheld. Included so
    * the UI can say "3 of 5 sharing" without inferring it from an absence.
@@ -267,7 +268,7 @@ export async function getFamilyLocations(
   const byUser = new Map(rows.map((r) => [r.userId, r]));
   const memberById = new Map(members.map((m) => [m.userId, m]));
 
-  const result: MemberLocation[] = [];
+  const result: MemberLocationRecord[] = [];
 
   for (const id of visibleIds) {
     const row = byUser.get(id);
