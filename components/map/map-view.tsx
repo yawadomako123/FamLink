@@ -33,11 +33,14 @@ export function MapView({
   familyId,
   familyName,
   memberNames,
+  placeLabels,
 }: {
   familyId: string;
   familyName: string;
   /** userId -> name, so withheld members can still be named in the list. */
   memberNames: Record<string, { name: string; image: string | null }>;
+  /** userId -> place name, e.g. "Home". Only for members currently inside one. */
+  placeLabels: Record<string, string>;
 }) {
   const { locations, withheld, loading, error, degraded, refresh } =
     useFamilyLocations(familyId);
@@ -173,6 +176,7 @@ export function MapView({
               <MemberRow
                 key={location.userId}
                 location={location}
+                placeLabel={placeLabels[location.userId]}
                 selected={location.userId === selectedId}
                 onSelect={() => handleSelect(location.userId)}
               />
@@ -205,7 +209,13 @@ export function MapView({
       </aside>
 
       {/* --------------------------------------------------------- detail -- */}
-      {selected && <MemberDetail location={selected} onClose={() => setSelectedId(null)} />}
+      {selected && (
+        <MemberDetail
+          location={selected}
+          placeLabel={placeLabels[selected.userId]}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
     </div>
   );
 }
@@ -214,10 +224,12 @@ export function MapView({
 
 function MemberRow({
   location,
+  placeLabel,
   selected,
   onSelect,
 }: {
   location: MemberLocation;
+  placeLabel?: string | undefined;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -241,7 +253,14 @@ function MemberRow({
           <p className="text-sm font-medium text-fg truncate">{location.name}</p>
           <div className="flex items-center gap-1.5 mt-0.5">
             <StatusDot status={status} />
-            <span className="text-xs text-muted">{freshness.label}</span>
+            <span className="text-xs text-muted">
+              {/*
+                A place name reads better than coordinates, but it must not
+                imply currency the fix does not have, so freshness still
+                qualifies it.
+              */}
+              {placeLabel ? `At ${placeLabel} · ${freshness.label}` : freshness.label}
+            </span>
           </div>
         </div>
 
@@ -263,9 +282,11 @@ function MemberRow({
 
 function MemberDetail({
   location,
+  placeLabel,
   onClose,
 }: {
   location: MemberLocation;
+  placeLabel?: string | undefined;
   onClose: () => void;
 }) {
   const freshness = locationFreshness(location.recordedAt);
@@ -278,6 +299,10 @@ function MemberDetail({
 
           <div className="flex-1 min-w-0">
             <p className="font-semibold text-fg truncate">{location.name}</p>
+
+            {placeLabel && (
+              <p className="text-sm text-fg mt-0.5">At {placeLabel}</p>
+            )}
 
             {/*
               Freshness is stated in words, not implied. A position from 27

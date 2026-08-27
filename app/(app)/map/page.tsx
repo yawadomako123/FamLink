@@ -9,6 +9,7 @@ import { MapView } from '@/components/map/map-view';
 import { requireSession } from '@/lib/auth/session';
 import { resolveCurrentFamily } from '@/lib/families/current';
 import { listFamilyMembers } from '@/lib/families/queries';
+import { getCurrentPlaces } from '@/lib/places/service';
 
 export const metadata: Metadata = { title: 'Map' };
 
@@ -44,9 +45,21 @@ export default async function MapPage() {
    * they are, and conflating the two would mean the map's response had to carry
    * identities for people it must not locate.
    */
-  const members = await listFamilyMembers(session.user.id, current.id);
+  const [members, currentPlaces] = await Promise.all([
+    listFamilyMembers(session.user.id, current.id),
+    getCurrentPlaces(session.user.id, current.id),
+  ]);
+
   const memberNames = Object.fromEntries(
     members.map((m) => [m.userId, { name: m.name, image: m.image }]),
+  );
+
+  /*
+   * Place labels come from recorded geofence state, not recomputed here, so
+   * "At Home" always agrees with the arrival event the family was told about.
+   */
+  const placeLabels = Object.fromEntries(
+    [...currentPlaces.entries()].map(([userId, place]) => [userId, place.placeName]),
   );
 
   return (
@@ -55,6 +68,7 @@ export default async function MapPage() {
         familyId={current.id}
         familyName={current.name}
         memberNames={memberNames}
+        placeLabels={placeLabels}
       />
     </AppShell>
   );
