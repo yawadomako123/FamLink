@@ -127,6 +127,13 @@ export async function listNotifications(
     .limit(Math.min(limit, 100));
 }
 
+/**
+ * Unread count for one family.
+ *
+ * Needs no membership check: the query is scoped to rows whose `user_id` is
+ * the caller, and a non-member has none — so an unauthorized family id
+ * returns 0 rather than disclosing anything.
+ */
 export async function countUnread(userId: string, familyId: string): Promise<number> {
   return db.$count(
     notifications,
@@ -194,6 +201,7 @@ export async function pruneOldNotifications(olderThanDays = 90): Promise<number>
 /* Convenience builders                                                        */
 /* -------------------------------------------------------------------------- */
 
+/** INTERNAL: fan-out helper. Callers reach it only from guarded paths. */
 export async function notifyPlaceEvent(
   familyId: string,
   actorId: string,
@@ -216,6 +224,7 @@ export async function notifyPlaceEvent(
   });
 }
 
+/** INTERNAL: fan-out helper. Callers reach it only from guarded paths. */
 export async function notifySharingChanged(
   familyId: string,
   actorId: string,

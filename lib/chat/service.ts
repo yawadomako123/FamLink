@@ -204,12 +204,16 @@ export async function deleteMessage(
 /* -------------------------------------------------------------------------- */
 
 /**
- * Read state is a high-water mark rather than a per-message flag.
+ * Moves this member's read high-water mark.
  *
- * One row per member per family, and the unread count is a range count against
- * it. A read receipt per message would multiply rows by members for no benefit
- * — nobody needs to know *which* messages you have seen, only how many you
- * have not.
+ * Read state is a high-water mark rather than a per-message flag: one row per
+ * member per family, with the unread count as a range count against it. Nobody
+ * needs to know *which* messages you have seen, only how many you have not.
+ *
+ * INTERNAL — assumes the caller has already proved membership. Both call sites
+ * do: `sendMessage` above, and the read endpoint, which checks explicitly.
+ * Left unguarded because it runs on the message-send hot path, where a second
+ * membership query buys nothing.
  */
 export async function markThreadRead(
   userId: string,
@@ -232,6 +236,14 @@ export async function countUnreadMessages(
   userId: string,
   familyId: string,
 ): Promise<number> {
+  /*
+   * Guarded even though every current caller is already inside a membership
+   * check. Without it this counts the messages in any family id handed to it,
+   * which discloses how active a family you are not in is — small, but it is
+   * still an answer nobody outside that family is entitled to.
+   */
+  await requireMembership(userId, familyId);
+
   const [mark] = await db
     .select({ lastReadAt: messageReads.lastReadAt })
     .from(messageReads)

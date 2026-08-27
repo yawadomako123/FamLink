@@ -217,4 +217,12 @@ describe('unread counts', () => {
     const other = await createFamily(outsider.id, 'Other Family');
     expect(await countUnreadMessages(outsider.id, other.id)).toBe(0);
   });
+
+  it('refuses to count for a family the caller is not in', async () => {
+    await sendMessage(member.id, familyId, 'ours');
+
+    // Otherwise this discloses how active a family you are not in is — small,
+    // but not an answer an outsider is entitled to.
+    await expectApiError(countUnreadMessages(outsider.id, familyId), 404);
+  });
 });

@@ -165,6 +165,10 @@ export interface DetectedTransition {
 /**
  * Evaluates a member's new position against their family's places.
  *
+ * INTERNAL: no membership check of its own. Its sole caller is
+ * `recordLocation`, which has already proved membership *and* that sharing is
+ * switched on before any position reaches this function.
+ *
  * Called from the location write path. Because a PWA only reports while it is
  * open, this is the honest limit of FamLink's geofencing: transitions are
  * detected when an update arrives, not continuously. The README says so
