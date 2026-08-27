@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Alert } from '@/components/ui/feedback';
 import { api, errorMessage } from '@/lib/api/client';
+import { CallDiagnostic } from './call-diagnostic';
 import { cn } from '@/lib/utils';
 
 export interface PreferencesState {
@@ -232,6 +233,9 @@ export function SettingsView({
           )}
         </Card>
       )}
+
+      {/* Configuring a relay is not the same as it working, so this checks. */}
+      {familyId && <CallDiagnostic />}
 
       {/* ------------------------------------------------------- appearance -- */}
       <Card>
