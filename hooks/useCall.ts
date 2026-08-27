@@ -425,9 +425,10 @@ export function useCall({
   const toggleMic = React.useCallback(() => {
     if (!localStreamRef.current) return;
     const audioTracks = localStreamRef.current.getAudioTracks();
-    if (audioTracks.length === 0) return;
+    const firstTrack = audioTracks[0];
+    if (!firstTrack) return;
 
-    const newState = !audioTracks[0].enabled;
+    const newState = !firstTrack.enabled;
     audioTracks.forEach((t) => (t.enabled = newState));
     setMicEnabled(newState);
 
@@ -438,9 +439,10 @@ export function useCall({
   const toggleCamera = React.useCallback(() => {
     if (!localStreamRef.current) return;
     const videoTracks = localStreamRef.current.getVideoTracks();
-    if (videoTracks.length === 0) return;
+    const firstTrack = videoTracks[0];
+    if (!firstTrack) return;
 
-    const newState = !videoTracks[0].enabled;
+    const newState = !firstTrack.enabled;
     videoTracks.forEach((t) => (t.enabled = newState));
     setCameraEnabled(newState);
 

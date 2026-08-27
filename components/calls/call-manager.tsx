@@ -109,6 +109,9 @@ export function CallManager({
     [call, familyId, refresh],
   );
 
+  const isRinging = call?.status === 'ringing';
+  useRingtone('incoming', isRinging);
+
   if (!call || !ice) return null;
 
   const isParticipating =
@@ -135,9 +138,6 @@ export function CallManager({
   }
 
   // Being rung, or a call is running that this member has not joined.
-  const isRinging = call.status === 'ringing';
-  useRingtone('incoming', isRinging);
-
   return (
     <div
       role="alertdialog"

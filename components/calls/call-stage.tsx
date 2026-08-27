@@ -189,6 +189,7 @@ function ControlButton({
 
 function RemoteTile({ remote, name }: { remote: RemoteParticipant; name: string }) {
   const ref = React.useRef<HTMLVideoElement>(null);
+  const isMuted = !remote.micEnabled;
 
   React.useEffect(() => {
     const el = ref.current;
@@ -200,7 +201,6 @@ function RemoteTile({ remote, name }: { remote: RemoteParticipant; name: string 
 
   const hasVideo = remote.cameraEnabled && remote.stream.getVideoTracks().length > 0;
   const connecting = remote.connectionState !== 'connected';
-  const isMuted = !remote.micEnabled;
 
   return (
     <div className="relative rounded-2xl overflow-hidden bg-sand-900 min-h-0">
