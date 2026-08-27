@@ -6,6 +6,7 @@ import { signOut } from '@/lib/auth/client';
 import { BottomNav } from './bottom-nav';
 import { Sidebar } from './sidebar';
 import { TopBar, type TopBarUser } from './top-bar';
+import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { cn } from '@/lib/utils';
 
 export interface AppShellProps {
@@ -91,6 +92,9 @@ export function AppShell({
       </div>
 
       <BottomNav alertCount={alertCount} />
+
+      {/* Renders only where the browser actually offers an install. */}
+      <InstallPrompt />
     </div>
   );
 }
