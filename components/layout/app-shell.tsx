@@ -47,14 +47,24 @@ export function AppShell({
   }, [router]);
 
   return (
-    <div className="flex min-h-dvh bg-surface">
+    /*
+     * Full-bleed pages need a *definite* height, not a minimum: the map fills
+     * its container with `flex-1`, and under `min-h-dvh` that resolves against
+     * content height and collapses to zero.
+     */
+    <div
+      className={cn(
+        'flex bg-surface',
+        fullBleed ? 'h-dvh overflow-hidden' : 'min-h-dvh',
+      )}
+    >
       <Sidebar
         familyName={familyName}
         alertCount={alertCount}
         unreadMessages={unreadMessages}
       />
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <TopBar
           user={user}
           title={title}
