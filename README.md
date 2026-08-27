@@ -13,7 +13,7 @@ switches it back off.
 
 ## Status
 
-Under active development, built in phases. Current state:
+All eight phases are complete. What each one delivered:
 
 | Phase | Scope | Status |
 | ----- | ------------------------------------------------ | ------ |
@@ -21,10 +21,10 @@ Under active development, built in phases. Current state:
 | 2 | Families, invitations, roles, member management | ✅ Done |
 | 3 | Location sharing, permission model, location API | ✅ Done |
 | 4 | Live family map | ✅ Done |
-| 5 | Places and geofencing | ⬜ Next |
-| 6 | Notifications, arrival alerts, SOS | ⬜ |
-| 7 | Family chat | ⬜ |
-| 8 | Polish, accessibility, performance, security review | ⬜ |
+| 5 | Places and geofencing | ✅ Done |
+| 6 | Notifications, arrival alerts, SOS | ✅ Done |
+| 7 | Family chat | ✅ Done |
+| 8 | Polish, accessibility, performance, security review | ✅ Done |
 
 ---
 
@@ -102,6 +102,15 @@ surface (map, member list, realtime stream, history) defers to it:
 
 `paused` withholds location exactly like `off` — that's the promise the pause
 control makes to the person who tapped it.
+
+**4. Realtime events carry invalidation hints, never data.**
+`NOTIFY` is a broadcast: every listener receives every message. If a location
+update carried coordinates, they would reach a process that must then be
+trusted to filter per-viewer, and one bug there leaks a position somebody
+explicitly hid. Instead an event says only *that* something changed in a
+family, and the client re-fetches through the ordinary authorized endpoint — so
+the visibility rule is applied on every read, by the same code path as a page
+load. Realtime cannot become a second, weaker authorization surface.
 
 ### Project structure
 
@@ -229,6 +238,7 @@ cached copy would be both a privacy leak and a correctness bug.
 | `npm run verify` | typecheck + lint + test + build |
 | `npm run db:up` / `db:down` | Start/stop local Postgres |
 | `npm run db:generate` / `db:migrate` / `db:studio` | Drizzle tooling |
+| `npm run db:seed` | Development fixture family (refuses non-local databases) |
 | `npm run icons` | Regenerate PWA icons |
 
 ---
@@ -256,6 +266,8 @@ Security and authorization tests carry the most weight here — the priority is
 proving that data *cannot* be reached, not that buttons render. Covered:
 location visibility across every sharing/visibility combination, role ranking,
 rate limiting, location freshness (that a stale fix is never labelled live),
+geofence transitions (including a jitter simulation that must emit nothing),
+notification payloads containing no coordinates, chat and SOS authorization,
 and family authorization end to end — cross-family isolation, removed members,
 role escalation attempts, invitation expiry and revocation, concurrent
 redemption of a single code, and that no invitation row contains a plaintext
@@ -326,7 +338,14 @@ bearer token, and background geofencing improves immediately.
   print to the server console in development and throw in production, rather
   than silently vanishing.
 - **SOS alerts family members only.** FamLink does **not** contact police,
-  ambulance or any emergency service, and never claims to.
+  ambulance or any emergency service, and never claims to. The UI says so in
+  the confirmation dialog, in the sent confirmation, and beside every active
+  alert.
+- **An active SOS overrides the sender's location visibility.** This is a
+  deliberate, narrow exception: raising an SOS is a specific, deliberate
+  request for this family's help, which is stronger consent than a standing
+  preference. It applies only to the coordinates captured at that moment, only
+  while the alert is active, and never to the sender's ongoing position.
 
 ---
 
