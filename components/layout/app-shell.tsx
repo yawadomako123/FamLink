@@ -7,11 +7,15 @@ import { BottomNav } from './bottom-nav';
 import { Sidebar } from './sidebar';
 import { TopBar, type TopBarUser } from './top-bar';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import type { FamilySummary } from '@/lib/families/queries';
 import { cn } from '@/lib/utils';
 
 export interface AppShellProps {
   user: TopBarUser;
   familyName?: string | undefined;
+  /** Supplied when in a family; enables the switcher. */
+  family?: FamilySummary | undefined;
+  families?: FamilySummary[];
   title?: string | undefined;
   alertCount?: number;
   unreadMessages?: number;
@@ -32,6 +36,8 @@ export interface AppShellProps {
 export function AppShell({
   user,
   familyName,
+  family,
+  families,
   title,
   alertCount = 0,
   unreadMessages = 0,
@@ -61,6 +67,8 @@ export function AppShell({
     >
       <Sidebar
         familyName={familyName}
+        family={family}
+        families={families}
         alertCount={alertCount}
         unreadMessages={unreadMessages}
       />

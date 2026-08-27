@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: 'My history' };
 
 export default async function HistoryPage() {
   const session = await requireSession('/history');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -43,6 +43,8 @@ export default async function HistoryPage() {
       user={session.user}
       familyName={current.name}
       title="My history"
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
     >

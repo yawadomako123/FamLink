@@ -40,6 +40,8 @@ export default async function FamilyPage() {
       user={session.user}
       familyName={current.name}
       title="Family"
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
     >

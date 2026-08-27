@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: 'Profile' };
 
 export default async function ProfilePage() {
   const session = await requireSession('/profile');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -27,6 +27,8 @@ export default async function ProfilePage() {
       user={session.user}
       familyName={current?.name}
       title="Profile"
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
     >

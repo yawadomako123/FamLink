@@ -17,7 +17,7 @@ export const metadata: Metadata = { title: 'Home' };
 
 export default async function DashboardPage() {
   const session = await requireSession('/dashboard');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -54,6 +54,8 @@ export default async function DashboardPage() {
       user={session.user}
       familyName={current.name}
       title="Home"
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
     >

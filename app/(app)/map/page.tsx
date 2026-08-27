@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: 'Map' };
 
 export default async function MapPage() {
   const session = await requireSession('/map');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -69,6 +69,8 @@ export default async function MapPage() {
       user={session.user}
       familyName={current.name}
       title="Map"
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
       fullBleed

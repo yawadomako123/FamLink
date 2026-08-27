@@ -16,7 +16,7 @@ export const metadata: Metadata = { title: 'Alerts' };
 
 export default async function AlertsPage() {
   const session = await requireSession('/alerts');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -50,6 +50,8 @@ export default async function AlertsPage() {
     <AppShell
       user={session.user}
       familyName={current.name}
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
       title="Alerts"

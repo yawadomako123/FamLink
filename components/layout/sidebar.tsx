@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation';
 import { NAV_ITEMS, isActivePath } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { Logo } from './logo';
+import { FamilySwitcher } from '@/components/family/family-switcher';
+import type { FamilySummary } from '@/lib/families/queries';
 
 /**
  * Desktop navigation rail. The primary items sit above a divider, with the
@@ -13,10 +15,14 @@ import { Logo } from './logo';
  */
 export function Sidebar({
   familyName,
+  family,
+  families = [],
   alertCount = 0,
   unreadMessages = 0,
 }: {
   familyName?: string | undefined;
+  family?: FamilySummary | undefined;
+  families?: FamilySummary[];
   alertCount?: number;
   unreadMessages?: number;
 }) {
@@ -60,11 +66,17 @@ export function Sidebar({
         </Link>
       </div>
 
-      {familyName && (
-        <div className="px-5 pt-4 pb-2">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-subtle">Family</p>
-          <p className="text-sm font-medium text-fg truncate mt-0.5">{familyName}</p>
-        </div>
+      {family ? (
+        <FamilySwitcher current={family} families={families} className="px-5 pt-4 pb-2" />
+      ) : (
+        familyName && (
+          <div className="px-5 pt-4 pb-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-subtle">
+              Family
+            </p>
+            <p className="text-sm font-medium text-fg truncate mt-0.5">{familyName}</p>
+          </div>
+        )
       )}
 
       <nav aria-label="Main" className="flex-1 overflow-y-auto px-3 py-2">

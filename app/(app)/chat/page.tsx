@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: 'Chat' };
 
 export default async function ChatPage() {
   const session = await requireSession('/chat');
-  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+  const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
 
@@ -51,6 +51,8 @@ export default async function ChatPage() {
     <AppShell
       user={session.user}
       familyName={current.name}
+      family={current ?? undefined}
+      families={families}
       alertCount={alertCount}
       unreadMessages={unreadMessages}
       title="Chat"
