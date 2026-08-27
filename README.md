@@ -18,8 +18,8 @@ Under active development, built in phases. Current state:
 | Phase | Scope | Status |
 | ----- | ------------------------------------------------ | ------ |
 | 1 | Foundation: auth, database, app shell, PWA | ✅ Done |
-| 2 | Families, invitations, roles, member management | ⬜ Next |
-| 3 | Location sharing, permission model, location API | ⬜ |
+| 2 | Families, invitations, roles, member management | ✅ Done |
+| 3 | Location sharing, permission model, location API | ⬜ Next |
 | 4 | Live family map | ⬜ |
 | 5 | Places and geofencing | ⬜ |
 | 6 | Notifications, arrival alerts, SOS | ⬜ |
@@ -235,14 +235,31 @@ cached copy would be both a privacy leak and a correctness bug.
 
 ## Testing
 
+Authorization tests run against a real Postgres database. Create it once:
+
+```bash
+docker exec famlink-postgres psql -U famlink -d postgres -c "CREATE DATABASE famlink_test OWNER famlink;"
+```
+
+```bash
+TEST_DATABASE_URL=postgresql://famlink:famlink_dev_password@localhost:5432/famlink_test npm run db:migrate
+```
+
 ```bash
 npm test
 ```
 
+The suite refuses to run unless the database name contains `famlink_test`, so
+it cannot destroy development data.
+
 Security and authorization tests carry the most weight here — the priority is
 proving that data *cannot* be reached, not that buttons render. Covered:
 location visibility across every sharing/visibility combination, role ranking,
-rate limiting, and location freshness (that a stale fix is never labelled live).
+rate limiting, location freshness (that a stale fix is never labelled live),
+and family authorization end to end — cross-family isolation, removed members,
+role escalation attempts, invitation expiry and revocation, concurrent
+redemption of a single code, and that no invitation row contains a plaintext
+code.
 
 ---
 
