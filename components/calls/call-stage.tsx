@@ -191,8 +191,9 @@ function RemoteTile({ remote, name }: { remote: RemoteParticipant; name: string 
     if (el && el.srcObject !== remote.stream) el.srcObject = remote.stream;
   }, [remote.stream]);
 
-  const hasVideo = remote.stream.getVideoTracks().some((t) => t.enabled);
+  const hasVideo = remote.cameraEnabled && remote.stream.getVideoTracks().length > 0;
   const connecting = remote.connectionState !== 'connected';
+  const isMuted = !remote.micEnabled;
 
   return (
     <div className="relative rounded-2xl overflow-hidden bg-sand-900 min-h-0">
@@ -211,6 +212,7 @@ function RemoteTile({ remote, name }: { remote: RemoteParticipant; name: string 
 
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/55 backdrop-blur-sm">
         <span className="text-xs font-medium text-white">{name}</span>
+        {isMuted && <MicOff aria-hidden className="size-3 text-danger-500" />}
         {connecting && <Loader2 aria-hidden className="size-3 animate-spin text-white/70" />}
       </div>
     </div>

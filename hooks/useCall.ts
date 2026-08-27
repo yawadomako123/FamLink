@@ -33,6 +33,8 @@ export interface RemoteParticipant {
   userId: string;
   stream: MediaStream;
   connectionState: RTCPeerConnectionState;
+  cameraEnabled: boolean;
+  micEnabled: boolean;
 }
 
 export interface UseCallResult {
@@ -124,6 +126,15 @@ export function useCall({
     [familyId, callId],
   );
 
+  const broadcastSignal = React.useCallback(
+    (signalKind: string, payload: Record<string, unknown>) => {
+      for (const peerId of peerIds) {
+        void postSignal(peerId, signalKind, payload);
+      }
+    },
+    [peerIds, postSignal],
+  );
+
   /* ------------------------------------------------------------ peering -- */
 
   const createPeer = React.useCallback(
@@ -153,7 +164,7 @@ export function useCall({
           const next = current.filter((r) => r.userId !== peerId);
           return [
             ...next,
-            { userId: peerId, stream, connectionState: connection.connectionState },
+            { userId: peerId, stream, connectionState: connection.connectionState, cameraEnabled: true, micEnabled: true },
           ];
         });
       };
@@ -253,6 +264,20 @@ export function useCall({
           } else {
             peer.pendingCandidates.push(candidate);
           }
+          return;
+        }
+
+        if (signal.kind === 'media-state') {
+          const camera = Boolean(signal.payload.camera);
+          const mic = Boolean(signal.payload.mic);
+          setRemotes((current) =>
+            current.map((r) =>
+              r.userId === signal.fromUserId
+                ? { ...r, cameraEnabled: camera, micEnabled: mic }
+                : r
+            )
+          );
+          return;
         }
       } catch (err) {
         console.error('[call] signal handling failed', err);
@@ -391,18 +416,22 @@ export function useCall({
   }, [familyId, callId, teardown]);
 
   const toggleMic = React.useCallback(() => {
-    const track = localStreamRef.current?.getAudioTracks()[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    setMicEnabled(track.enabled);
-  }, []);
+    const micTrack = localStreamRef.current?.getAudioTracks()[0];
+    const camTrack = localStreamRef.current?.getVideoTracks()[0];
+    if (!micTrack) return;
+    micTrack.enabled = !micTrack.enabled;
+    setMicEnabled(micTrack.enabled);
+    broadcastSignal('media-state', { camera: camTrack?.enabled ?? false, mic: micTrack.enabled });
+  }, [broadcastSignal]);
 
   const toggleCamera = React.useCallback(() => {
-    const track = localStreamRef.current?.getVideoTracks()[0];
-    if (!track) return;
-    track.enabled = !track.enabled;
-    setCameraEnabled(track.enabled);
-  }, []);
+    const micTrack = localStreamRef.current?.getAudioTracks()[0];
+    const camTrack = localStreamRef.current?.getVideoTracks()[0];
+    if (!camTrack) return;
+    camTrack.enabled = !camTrack.enabled;
+    setCameraEnabled(camTrack.enabled);
+    broadcastSignal('media-state', { camera: camTrack.enabled, mic: micTrack?.enabled ?? false });
+  }, [broadcastSignal]);
 
   return {
     phase,

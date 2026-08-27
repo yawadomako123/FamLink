@@ -420,7 +420,7 @@ function MessageRow({
         </div>
       )}
 
-      <div className={cn('max-w-[75%] min-w-0', isOwn && 'items-end')}>
+      <div className={cn('max-w-[75%] min-w-0', isOwn && 'flex flex-col items-end')}>
         {!isOwn && !grouped && (
           <p
             className="text-xs font-medium mb-0.5"
@@ -431,66 +431,69 @@ function MessageRow({
         )}
 
         <div className="flex items-end gap-1.5">
-          {!message.pending && (
-            <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-              <button
-                type="button"
-                onClick={() => setPickerOpen((v) => !v)}
-                aria-label="Add a reaction"
-                aria-expanded={pickerOpen}
-                className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
-              >
-                <SmilePlus aria-hidden className="size-3.5" />
-              </button>
-
-              {pickerOpen && (
-                <div
-                  role="menu"
-                  className="absolute bottom-full mb-1 left-0 flex gap-0.5 p-1 bg-card border border-line rounded-xl shadow-lift z-20"
+          {/* Actions for own messages (appear on the left) */}
+          {isOwn && (
+            <div className={cn("flex items-center gap-1", message.pending && "invisible")}>
+              <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  aria-label="Add a reaction"
+                  aria-expanded={pickerOpen}
+                  className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
                 >
-                  {REACTIONS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      role="menuitem"
-                      aria-label={`React with ${emoji}`}
-                      onClick={() => {
-                        setPickerOpen(false);
-                        onReact(emoji);
-                      }}
-                      className="size-8 rounded-lg text-base leading-none hover:bg-raised transition-colors"
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+                  <SmilePlus aria-hidden className="size-3.5" />
+                </button>
 
-          {isOwn && canDelete && !message.pending && (
-            <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-              <button
-                type="button"
-                onClick={() => setMenuOpen((v) => !v)}
-                aria-label="Message options"
-                className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
-              >
-                <MoreVertical aria-hidden className="size-3.5" />
-              </button>
-              {menuOpen && (
-                <div className="absolute right-0 bottom-full mb-1 w-40 bg-card border border-line rounded-xl shadow-lift p-1 z-10">
+                {pickerOpen && (
+                  <div
+                    role="menu"
+                    className="absolute bottom-full mb-1 left-0 flex gap-0.5 p-1 bg-card border border-line rounded-xl shadow-lift z-20"
+                  >
+                    {REACTIONS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        role="menuitem"
+                        aria-label={`React with ${emoji}`}
+                        onClick={() => {
+                          setPickerOpen(false);
+                          onReact(emoji);
+                        }}
+                        className="size-8 rounded-lg text-base leading-none hover:bg-raised transition-colors"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {canDelete && (
+                <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                   <button
                     type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDelete();
-                    }}
-                    className="w-full flex items-center gap-2 h-8 px-2 rounded-lg text-sm text-danger-600 hover:bg-tint-danger"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    aria-label="Message options"
+                    className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
                   >
-                    <Trash2 aria-hidden className="size-3.5" />
-                    Delete
+                    <MoreVertical aria-hidden className="size-3.5" />
                   </button>
+                  {menuOpen && (
+                    <div className="absolute right-0 bottom-full mb-1 w-40 bg-card border border-line rounded-xl shadow-lift p-1 z-10">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onDelete();
+                        }}
+                        className="w-full flex items-center gap-2 h-8 px-2 rounded-lg text-sm text-danger-600 hover:bg-tint-danger"
+                      >
+                        <Trash2 aria-hidden className="size-3.5" />
+                        Delete
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -508,6 +511,46 @@ function MessageRow({
           >
             {message.content}
           </div>
+
+          {/* Actions for received messages (appear on the right) */}
+          {!isOwn && (
+            <div className={cn("flex items-center gap-1", message.pending && "invisible")}>
+              <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  aria-label="Add a reaction"
+                  aria-expanded={pickerOpen}
+                  className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
+                >
+                  <SmilePlus aria-hidden className="size-3.5" />
+                </button>
+
+                {pickerOpen && (
+                  <div
+                    role="menu"
+                    className="absolute bottom-full mb-1 right-0 flex gap-0.5 p-1 bg-card border border-line rounded-xl shadow-lift z-20"
+                  >
+                    {REACTIONS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        role="menuitem"
+                        aria-label={`React with ${emoji}`}
+                        onClick={() => {
+                          setPickerOpen(false);
+                          onReact(emoji);
+                        }}
+                        className="size-8 rounded-lg text-base leading-none hover:bg-raised transition-colors"
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {message.reactions && message.reactions.length > 0 && (
