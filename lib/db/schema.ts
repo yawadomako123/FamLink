@@ -203,13 +203,13 @@ export const invitations = pgTable(
       .notNull()
       .references(() => families.id, { onDelete: 'cascade' }),
     /**
-     * Short, human-shareable code that appears in the join URL (…/join/ABC123).
-     * Generated from a CSPRNG over an unambiguous alphabet.
-     */
-    code: text('code').notNull().unique(),
-    /**
-     * SHA-256 of the code. Lookups hash the incoming code and compare against
-     * this, so a database leak does not hand out working invitations.
+     * SHA-256 of the invitation code, which is the only thing stored.
+     *
+     * The plaintext code is returned exactly once, when the invitation is
+     * created, and is never recoverable afterwards — the same discipline as an
+     * API key. Storing it alongside the hash would make the hash decorative,
+     * since a database leak would then hand out working invitations. Losing a
+     * link means revoking it and issuing another.
      */
     codeHash: text('code_hash').notNull(),
     role: familyRole('role').notNull().default('member'),
