@@ -76,10 +76,14 @@ export function AppShell({
           id="main"
           className={cn(
             'flex-1 min-h-0',
+            /*
+             * Both branches must clear the mobile tab bar, which is fixed and
+             * would otherwise sit on top of page content — a chat composer
+             * underneath it is unreachable, and the clicks land on navigation.
+             */
             fullBleed
-              ? 'flex flex-col'
-              : // Bottom padding clears the mobile tab bar plus the home indicator.
-                'overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0',
+              ? 'flex flex-col max-md:pb-[calc(3.5rem+env(safe-area-inset-bottom))]'
+              : 'overflow-y-auto pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0',
           )}
         >
           {children}
