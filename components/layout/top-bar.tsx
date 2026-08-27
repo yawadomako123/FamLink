@@ -107,7 +107,7 @@ export function TopBar({
                     setOpen(false);
                     onSignOut();
                   }}
-                  className="w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg text-sm text-danger-600 hover:bg-danger-50 transition-colors"
+                  className="w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg text-sm text-danger-600 hover:bg-tint-danger transition-colors"
                 >
                   <LogOut aria-hidden className="size-4" />
                   Log out

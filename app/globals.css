@@ -85,6 +85,23 @@
   --fg-subtle: var(--color-sand-500);
   --fg-on-brand: #ffffff;
 
+  /*
+   * Tinted surfaces (a selected option, an alert, an active nav item).
+   * These are tokens rather than raw palette steps because a fixed light tint
+   * such as brand-50 renders as a glaring white card in dark mode.
+   */
+  --tint-brand-bg: #eefbf7;
+  --tint-brand-fg: #12695d;
+  --tint-brand-line: #aaead9;
+
+  --tint-warn-bg: #fffbeb;
+  --tint-warn-fg: #78350f;
+  --tint-warn-line: #fde68a;
+
+  --tint-danger-bg: #fff1f2;
+  --tint-danger-fg: #be123c;
+  --tint-danger-line: #ffe4e6;
+
   color-scheme: light;
 }
 
@@ -100,6 +117,19 @@
     --fg-muted: var(--color-sand-400);
     --fg-subtle: var(--color-sand-500);
     --fg-on-brand: #ffffff;
+
+    /* Dark tints are translucent washes of the hue, not light fills. */
+    --tint-brand-bg: rgb(30 165 140 / 0.14);
+    --tint-brand-fg: #74d9c2;
+    --tint-brand-line: rgb(30 165 140 / 0.3);
+
+    --tint-warn-bg: rgb(217 119 6 / 0.16);
+    --tint-warn-fg: #fcd34d;
+    --tint-warn-line: rgb(217 119 6 / 0.34);
+
+    --tint-danger-bg: rgb(244 63 94 / 0.15);
+    --tint-danger-fg: #fda4af;
+    --tint-danger-line: rgb(244 63 94 / 0.32);
 
     color-scheme: dark;
   }
@@ -117,6 +147,19 @@
   --fg-subtle: var(--color-sand-500);
   --fg-on-brand: #ffffff;
 
+  /* Dark tints are translucent washes of the hue, not light fills. */
+  --tint-brand-bg: rgb(30 165 140 / 0.14);
+  --tint-brand-fg: #74d9c2;
+  --tint-brand-line: rgb(30 165 140 / 0.3);
+
+  --tint-warn-bg: rgb(217 119 6 / 0.16);
+  --tint-warn-fg: #fcd34d;
+  --tint-warn-line: rgb(217 119 6 / 0.34);
+
+  --tint-danger-bg: rgb(244 63 94 / 0.15);
+  --tint-danger-fg: #fda4af;
+  --tint-danger-line: rgb(244 63 94 / 0.32);
+
   color-scheme: dark;
 }
 
@@ -132,6 +175,18 @@
   --color-muted: var(--fg-muted);
   --color-subtle: var(--fg-subtle);
   --color-on-brand: var(--fg-on-brand);
+
+  --color-tint-brand: var(--tint-brand-bg);
+  --color-on-tint-brand: var(--tint-brand-fg);
+  --color-line-brand: var(--tint-brand-line);
+
+  --color-tint-warn: var(--tint-warn-bg);
+  --color-on-tint-warn: var(--tint-warn-fg);
+  --color-line-warn: var(--tint-warn-line);
+
+  --color-tint-danger: var(--tint-danger-bg);
+  --color-on-tint-danger: var(--tint-danger-fg);
+  --color-line-danger: var(--tint-danger-line);
 }
 
 @layer base {

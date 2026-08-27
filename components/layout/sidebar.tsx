@@ -37,7 +37,7 @@ export function Sidebar({
           aria-current={active ? 'page' : undefined}
           className={cn(
             'flex items-center gap-3 h-11 px-3 rounded-xl text-sm font-medium transition-colors',
-            active ? 'bg-brand-50 text-brand-700' : 'text-muted hover:bg-raised hover:text-fg',
+            active ? 'bg-tint-brand text-on-tint-brand' : 'text-muted hover:bg-raised hover:text-fg',
           )}
         >
           <Icon aria-hidden className="size-5" strokeWidth={active ? 2.3 : 1.9} />

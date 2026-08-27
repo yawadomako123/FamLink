@@ -30,10 +30,10 @@ export function MemberRowSkeleton() {
 type AlertTone = 'info' | 'warning' | 'error' | 'success';
 
 const ALERT_TONES: Record<AlertTone, { wrap: string; icon: React.ElementType }> = {
-  info: { wrap: 'bg-brand-50 text-brand-900 border-brand-200', icon: Info },
-  success: { wrap: 'bg-brand-50 text-brand-900 border-brand-200', icon: CheckCircle2 },
-  warning: { wrap: 'bg-amber-50 text-amber-900 border-amber-200', icon: AlertTriangle },
-  error: { wrap: 'bg-danger-50 text-danger-700 border-danger-100', icon: AlertTriangle },
+  info: { wrap: 'bg-tint-brand text-on-tint-brand border-line-brand', icon: Info },
+  success: { wrap: 'bg-tint-brand text-on-tint-brand border-line-brand', icon: CheckCircle2 },
+  warning: { wrap: 'bg-tint-warn text-on-tint-warn border-line-warn', icon: AlertTriangle },
+  error: { wrap: 'bg-tint-danger text-on-tint-danger border-line-danger', icon: AlertTriangle },
 };
 
 export function Alert({
@@ -109,7 +109,7 @@ export function ConnectionBanner({ state }: { state: 'reconnecting' | 'polling' 
   return (
     <div
       role="status"
-      className="flex items-center justify-center gap-2 bg-amber-50 text-amber-900 text-xs font-medium px-4 py-2 border-b border-amber-200"
+      className="flex items-center justify-center gap-2 bg-tint-warn text-on-tint-warn text-xs font-medium px-4 py-2 border-b border-line-warn"
     >
       <WifiOff aria-hidden className="size-3.5" />
       {copy[state]}

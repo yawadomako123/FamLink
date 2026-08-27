@@ -52,7 +52,7 @@ export default function ForgotPasswordPage() {
   if (sent) {
     return (
       <div className="text-center">
-        <div className="size-12 rounded-2xl bg-brand-50 flex items-center justify-center mx-auto">
+        <div className="size-12 rounded-2xl bg-tint-brand flex items-center justify-center mx-auto">
           <MailCheck aria-hidden className="size-6 text-brand-600" />
         </div>
         <h1 className="text-2xl font-semibold tracking-tight mt-5">Check your email</h1>
