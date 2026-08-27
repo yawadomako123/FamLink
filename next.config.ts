@@ -14,8 +14,19 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
           {
             key: 'Permissions-Policy',
-            // Geolocation is required by the product; everything else is denied.
-            value: 'geolocation=(self), camera=(), microphone=(), payment=(), usb=()',
+            /*
+             * Geolocation, camera and microphone are all required by the
+             * product — location sharing and voice/video calls respectively —
+             * and are granted to this origin only. Everything else is denied.
+             *
+             * Denying camera and microphone here was correct before calls
+             * existed and silently broke them afterwards: getUserMedia is
+             * rejected by policy before the browser ever prompts, so no
+             * permission dialog appears and the failure looks like a hardware
+             * problem.
+             */
+            value:
+              'geolocation=(self), camera=(self), microphone=(self), payment=(), usb=()',
           },
         ],
       },

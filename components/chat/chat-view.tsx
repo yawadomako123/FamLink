@@ -227,7 +227,14 @@ export function ChatView({
             <section key={day} aria-label={day}>
               <div className="flex items-center gap-3 my-4">
                 <span className="flex-1 h-px bg-line" />
-                <span className="text-xs font-medium text-subtle">{day}</span>
+                {/*
+                  Formatted in the viewer's timezone, so the server's render
+                  legitimately differs from the client's. This is the case
+                  suppressHydrationWarning exists for.
+                */}
+                <span suppressHydrationWarning className="text-xs font-medium text-subtle">
+                  {day}
+                </span>
                 <span className="flex-1 h-px bg-line" />
               </div>
 
@@ -403,6 +410,7 @@ function MessageRow({
         </div>
 
         <p
+          suppressHydrationWarning
           className={cn(
             'text-[11px] text-subtle mt-0.5 tabular-nums',
             isOwn ? 'text-right' : 'text-left',
