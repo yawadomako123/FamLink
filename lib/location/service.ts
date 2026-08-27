@@ -13,6 +13,7 @@ import {
 import { requireMembership } from '@/lib/permissions/family';
 import { canViewLocation } from '@/lib/permissions/location-visibility';
 import { Errors } from '@/lib/api/errors';
+import { evaluateAndRecordGeofences, type DetectedTransition } from '@/lib/places/service';
 import type { LocationUpdateInput } from '@/lib/validation/location';
 
 /**
@@ -61,7 +62,7 @@ export interface FamilyLocationsResult {
 export async function recordLocation(
   userId: string,
   input: LocationUpdateInput,
-): Promise<{ recordedAt: Date }> {
+): Promise<{ recordedAt: Date; transitions: DetectedTransition[] }> {
   const membership = await requireMembership(userId, input.familyId);
 
   if (membership.locationSharingState !== 'sharing') {
@@ -123,7 +124,29 @@ export async function recordLocation(
       .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)));
   });
 
-  return { recordedAt };
+  /*
+   * Geofences are evaluated here, on receipt, because that is the only moment
+   * FamLink reliably learns where somebody is. A PWA cannot watch position in
+   * the background, so there is no continuous evaluation to do — see the
+   * background-location limitation in the README.
+   *
+   * Kept outside the transaction above: a geofence failure must not roll back
+   * a perfectly good location write.
+   */
+  let transitions: DetectedTransition[] = [];
+
+  try {
+    transitions = await evaluateAndRecordGeofences(
+      userId,
+      familyId,
+      { latitude, longitude, accuracy: accuracy ?? null },
+      recordedAt,
+    );
+  } catch (error) {
+    console.error('[location] geofence evaluation failed', error);
+  }
+
+  return { recordedAt, transitions };
 }
 
 export interface SharingSettings {
