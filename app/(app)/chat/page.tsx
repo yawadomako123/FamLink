@@ -7,16 +7,17 @@ import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { ChatView } from '@/components/chat/chat-view';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { listMessages } from '@/lib/chat/service';
 import { getMembership } from '@/lib/permissions/family';
-import { countUnread } from '@/lib/notifications/service';
 
 export const metadata: Metadata = { title: 'Chat' };
 
 export default async function ChatPage() {
   const session = await requireSession('/chat');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -39,10 +40,9 @@ export default async function ChatPage() {
     );
   }
 
-  const [recent, membership, alertCount] = await Promise.all([
+  const [recent, membership] = await Promise.all([
     listMessages(session.user.id, current.id, { limit: 50 }),
     getMembership(session.user.id, current.id),
-    countUnread(session.user.id, current.id),
   ]);
 
   const canModerate = membership?.role === 'owner' || membership?.role === 'admin';
@@ -51,8 +51,9 @@ export default async function ChatPage() {
     <AppShell
       user={session.user}
       familyName={current.name}
-      title="Chat"
       alertCount={alertCount}
+      unreadMessages={unreadMessages}
+      title="Chat"
       fullBleed
     >
       <ChatView

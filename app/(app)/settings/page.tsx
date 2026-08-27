@@ -3,16 +3,18 @@ import { Settings } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
 import { PhasePlaceholder } from '@/components/layout/phase-placeholder';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 
 export const metadata: Metadata = { title: 'Settings' };
 
 export default async function Page() {
   const session = await requireSession('/settings');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   return (
-    <AppShell user={session.user} familyName={current?.name} title="Settings">
+    <AppShell user={session.user} familyName={current?.name} title="Settings" alertCount={alertCount} unreadMessages={unreadMessages}>
       <PhasePlaceholder
         icon={Settings}
         title="Settings arrive in phase 3"

@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { MapView } from '@/components/map/map-view';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { listFamilyMembers } from '@/lib/families/queries';
 import { getCurrentPlaces } from '@/lib/places/service';
 
@@ -15,7 +15,9 @@ export const metadata: Metadata = { title: 'Map' };
 
 export default async function MapPage() {
   const session = await requireSession('/map');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -63,7 +65,14 @@ export default async function MapPage() {
   );
 
   return (
-    <AppShell user={session.user} familyName={current.name} title="Map" fullBleed>
+    <AppShell
+      user={session.user}
+      familyName={current.name}
+      title="Map"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+      fullBleed
+    >
       <MapView
         familyId={current.id}
         familyName={current.name}

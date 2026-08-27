@@ -7,13 +7,15 @@ import { Alert, EmptyState } from '@/components/ui/feedback';
 import { Button } from '@/components/ui/button';
 import { HistoryTimeline } from '@/components/location/history-timeline';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 
 export const metadata: Metadata = { title: 'My history' };
 
 export default async function HistoryPage() {
   const session = await requireSession('/history');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -37,7 +39,13 @@ export default async function HistoryPage() {
   }
 
   return (
-    <AppShell user={session.user} familyName={current.name} title="My history">
+    <AppShell
+      user={session.user}
+      familyName={current.name}
+      title="My history"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+    >
       <div className="px-4 md:px-6 py-6 max-w-2xl space-y-4">
         {/*
           Stated up front rather than buried in settings: this page shows only

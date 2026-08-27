@@ -7,7 +7,7 @@ import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { PlacesView } from '@/components/places/places-view';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { listPlaces } from '@/lib/places/service';
 import { getFamilyLocations } from '@/lib/location/service';
 import { getMembership } from '@/lib/permissions/family';
@@ -16,7 +16,9 @@ export const metadata: Metadata = { title: 'Places' };
 
 export default async function PlacesPage() {
   const session = await requireSession('/places');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -63,7 +65,13 @@ export default async function PlacesPage() {
     : null;
 
   return (
-    <AppShell user={session.user} familyName={current.name} title="Places">
+    <AppShell
+      user={session.user}
+      familyName={current.name}
+      title="Places"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+    >
       <PlacesView
         familyId={current.id}
         places={places}

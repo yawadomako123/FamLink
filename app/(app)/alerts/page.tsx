@@ -8,15 +8,17 @@ import { EmptyState } from '@/components/ui/feedback';
 import { AlertsView } from '@/components/alerts/alerts-view';
 import { SosButton } from '@/components/alerts/sos-button';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
-import { countUnread, listNotifications } from '@/lib/notifications/service';
+import { resolveShellData } from '@/lib/families/shell';
+import { listNotifications } from '@/lib/notifications/service';
 import { listActiveEmergencies } from '@/lib/notifications/emergency';
 
 export const metadata: Metadata = { title: 'Alerts' };
 
 export default async function AlertsPage() {
   const session = await requireSession('/alerts');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -39,18 +41,18 @@ export default async function AlertsPage() {
     );
   }
 
-  const [notifications, emergencies, unread] = await Promise.all([
+  const [notifications, emergencies] = await Promise.all([
     listNotifications(session.user.id, current.id),
     listActiveEmergencies(session.user.id, current.id),
-    countUnread(session.user.id, current.id),
   ]);
 
   return (
     <AppShell
       user={session.user}
       familyName={current.name}
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
       title="Alerts"
-      alertCount={unread}
       headerRight={<SosButton familyId={current.id} familyName={current.name} compact />}
     >
       <AlertsView

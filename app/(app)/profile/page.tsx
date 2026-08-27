@@ -7,7 +7,7 @@ import { ProfileIdentity } from '@/components/profile/profile-identity';
 import { SharingControl } from '@/components/location/sharing-control';
 import { SignOutButton } from '@/components/profile/sign-out-button';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { getMembership } from '@/lib/permissions/family';
 import { isAvatarUploadEnabled } from '@/lib/env';
 
@@ -15,13 +15,21 @@ export const metadata: Metadata = { title: 'Profile' };
 
 export default async function ProfilePage() {
   const session = await requireSession('/profile');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   // The sharing control is per-family, so it needs this user's membership row.
   const membership = current ? await getMembership(session.user.id, current.id) : null;
 
   return (
-    <AppShell user={session.user} familyName={current?.name} title="Profile">
+    <AppShell
+      user={session.user}
+      familyName={current?.name}
+      title="Profile"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+    >
       <div className="px-4 md:px-6 py-6 max-w-2xl space-y-5">
         <ProfileIdentity
           userId={session.user.id}

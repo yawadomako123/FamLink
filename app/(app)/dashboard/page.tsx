@@ -8,7 +8,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { StatusDot, type PresenceStatus } from '@/components/ui/status-dot';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { listFamilyMembers } from '@/lib/families/queries';
 import { locationFreshness } from '@/lib/time';
 
@@ -16,7 +16,9 @@ export const metadata: Metadata = { title: 'Home' };
 
 export default async function DashboardPage() {
   const session = await requireSession('/dashboard');
-  const { current } = await resolveCurrentFamily(session.user.id);
+  const { family: current, alertCount, unreadMessages } = await resolveShellData(
+    session.user.id,
+  );
 
   if (!current) {
     return (
@@ -47,7 +49,13 @@ export default async function DashboardPage() {
   const others = members.filter((m) => m.userId !== session.user.id);
 
   return (
-    <AppShell user={session.user} familyName={current.name} title="Home">
+    <AppShell
+      user={session.user}
+      familyName={current.name}
+      title="Home"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+    >
       <div className="px-4 md:px-6 py-6 max-w-3xl space-y-5">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">

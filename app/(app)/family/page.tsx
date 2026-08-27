@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import { AppShell } from '@/components/layout/app-shell';
 import { requireSession } from '@/lib/auth/session';
-import { resolveCurrentFamily } from '@/lib/families/current';
+import { resolveShellData } from '@/lib/families/shell';
 import { listFamilyInvitations, listFamilyMembers } from '@/lib/families/queries';
 import { roleAtLeast } from '@/lib/permissions/location-visibility';
 import { CreateFamilyPanel } from '@/components/family/create-family-panel';
@@ -11,7 +11,12 @@ export const metadata: Metadata = { title: 'Family' };
 
 export default async function FamilyPage() {
   const session = await requireSession('/family');
-  const { current, families } = await resolveCurrentFamily(session.user.id);
+  const {
+    family: current,
+    families,
+    alertCount,
+    unreadMessages,
+  } = await resolveShellData(session.user.id);
 
   // No family yet — the whole page becomes the create/join choice.
   if (!current) {
@@ -31,7 +36,13 @@ export default async function FamilyPage() {
   ]);
 
   return (
-    <AppShell user={session.user} familyName={current.name} title="Family">
+    <AppShell
+      user={session.user}
+      familyName={current.name}
+      title="Family"
+      alertCount={alertCount}
+      unreadMessages={unreadMessages}
+    >
       <FamilyView
         family={current}
         families={families}
