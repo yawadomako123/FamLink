@@ -3,6 +3,15 @@
 import * as React from 'react';
 import { api, ApiClientError, NetworkError } from '@/lib/api/client';
 import { shouldSendUpdate, THROTTLE, type ThrottleState } from '@/lib/location/geo';
+import {
+  ACQUISITION_TARGET_ACCURACY_M,
+  ACQUISITION_WINDOW_MS,
+  bestOf,
+  describeAccuracy,
+  judgeFix,
+  smooth,
+  type Fix,
+} from '@/lib/location/accuracy';
 import type { LocationSharingState } from '@/lib/db/schema';
 
 /**
@@ -39,6 +48,10 @@ export interface UseLocationResult {
   /** True while the watch is suspended because the page is hidden. */
   backgroundLimited: boolean;
   pending: boolean;
+  /** True while sampling for an initial high-quality fix. */
+  acquiring: boolean;
+  /** Plain-language description of the current fix's precision. */
+  accuracyLabel: string;
   startSharing: () => Promise<void>;
   pauseSharing: () => Promise<void>;
   stopSharing: () => Promise<void>;
@@ -49,8 +62,20 @@ const GEO_OPTIONS: PositionOptions = {
   enableHighAccuracy: true,
   // Generous: a cold GPS fix indoors can genuinely take this long.
   timeout: 30_000,
-  // A fix up to a minute old is fine; it avoids waking the radio needlessly.
-  maximumAge: 60_000,
+  /*
+   * Never serve a cached position. A stale fix from the browser's cache is
+   * indistinguishable from a current one once it reaches the family's map, and
+   * FamLink's whole freshness story depends on timestamps meaning what they
+   * say.
+   */
+  maximumAge: 0,
+};
+
+/** Sampling options while acquiring the first fix. */
+const ACQUIRE_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  timeout: ACQUISITION_WINDOW_MS,
+  maximumAge: 0,
 };
 
 export function useLocation({
@@ -66,6 +91,7 @@ export function useLocation({
   const [lastSentAt, setLastSentAt] = React.useState<number | null>(null);
   const [problem, setProblem] = React.useState<LocationProblem | null>(null);
   const [pending, setPending] = React.useState(false);
+  const [acquiring, setAcquiring] = React.useState(false);
 
   // Page visibility is external state, so it is subscribed to rather than
   // mirrored into a useState from an effect.
@@ -74,6 +100,8 @@ export function useLocation({
 
   const watchIdRef = React.useRef<number | null>(null);
   const throttleRef = React.useRef<ThrottleState>({ lastSentAt: null, lastPosition: null });
+  /** The best fix accepted so far, after filtering and smoothing. */
+  const bestFixRef = React.useRef<Fix | null>(null);
   // Guards against overlapping posts when fixes arrive faster than the network.
   const inFlightRef = React.useRef(false);
 
@@ -137,19 +165,19 @@ export function useLocation({
   /* ----------------------------------------------------------- send a fix -- */
 
   const send = React.useCallback(
-    async (position: GeolocationPosition) => {
+    async (fix: Fix) => {
       if (inFlightRef.current) return;
       inFlightRef.current = true;
 
-      const { latitude, longitude, accuracy } = position.coords;
+      const { latitude, longitude, accuracy } = fix;
 
       try {
         await api.post('/api/v1/locations', {
           familyId,
           latitude,
           longitude,
-          accuracy,
-          recordedAt: new Date(position.timestamp).toISOString(),
+          ...(accuracy !== null ? { accuracy } : {}),
+          recordedAt: new Date(fix.timestamp).toISOString(),
           battery: await readBattery(),
         });
 
@@ -186,28 +214,51 @@ export function useLocation({
 
   const onPosition = React.useCallback(
     (position: GeolocationPosition) => {
-      const { latitude, longitude, accuracy } = position.coords;
-      setLastFix({ latitude, longitude, accuracy, at: position.timestamp });
+      const raw: Fix = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        timestamp: position.timestamp,
+      };
+
+      /*
+       * Filter before doing anything else. A single bad fix can place somebody
+       * a suburb away, and once that reaches the family's map the damage is
+       * done — better to drop it and wait for the next.
+       */
+      const verdict = judgeFix(raw, bestFixRef.current);
+
+      if (!verdict.accept) {
+        if (verdict.reason === 'unusable-accuracy') {
+          setProblem({
+            kind: 'inaccurate',
+            message: `Your device's location is only accurate to about ${Math.round(
+              raw.accuracy ?? 0,
+            )}m right now, so it hasn't been shared. This usually improves outdoors.`,
+          });
+        }
+        // Every other rejection is routine noise, not worth telling anyone.
+        return;
+      }
+
+      // Smooth against the previous accepted fix to damp stationary jitter.
+      const fix = smooth(raw, bestFixRef.current);
+      bestFixRef.current = fix;
+
+      setLastFix({
+        latitude: fix.latitude,
+        longitude: fix.longitude,
+        accuracy: fix.accuracy,
+        at: fix.timestamp,
+      });
 
       const decision = shouldSendUpdate(
-        { latitude, longitude, accuracy },
+        { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy ?? undefined },
         throttleRef.current,
         Date.now(),
       );
 
-      if (decision.send) {
-        void send(position);
-        return;
-      }
-
-      if (decision.reason === 'too-inaccurate') {
-        setProblem({
-          kind: 'inaccurate',
-          message: `Your device's location is only accurate to about ${Math.round(
-            accuracy,
-          )}m right now, so it hasn't been shared. This usually improves outdoors.`,
-        });
-      }
+      if (decision.send) void send(fix);
     },
     [send],
   );
@@ -312,30 +363,79 @@ export function useLocation({
       return;
     }
 
+    setAcquiring(true);
+
     /*
-     * Ask for a single position first. This is what surfaces the browser's
-     * permission prompt, and it means we never tell the server we are sharing
-     * when the user is about to deny the prompt.
+     * Sample for a few seconds rather than taking the first fix.
+     *
+     * Browsers very often return a coarse network-derived position first and
+     * refine it to a satellite fix seconds later. Taking the first one means
+     * telling the family you are 500m from where you are. Sampling stops early
+     * once a fix is good enough, so this rarely costs the full window.
+     *
+     * This is also what surfaces the permission prompt, so we never tell the
+     * server we are sharing when the user is about to deny it.
      */
-    const granted = await new Promise<boolean>((resolve) => {
-      navigator.geolocation.getCurrentPosition(
+    const outcome = await new Promise<'granted' | 'denied' | 'unavailable'>((resolve) => {
+      const samples: Fix[] = [];
+      let settled = false;
+      let watchId: number | null = null;
+
+      const finish = (result: 'granted' | 'denied' | 'unavailable') => {
+        if (settled) return;
+        settled = true;
+        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+        const best = bestOf(samples);
+        if (best) {
+          bestFixRef.current = best;
+          setLastFix({
+            latitude: best.latitude,
+            longitude: best.longitude,
+            accuracy: best.accuracy,
+            at: best.timestamp,
+          });
+        }
+
+        resolve(samples.length > 0 ? 'granted' : result);
+      };
+
+      const timer = setTimeout(() => finish('granted'), ACQUISITION_WINDOW_MS);
+
+      watchId = navigator.geolocation.watchPosition(
         (position) => {
-          onPosition(position);
-          resolve(true);
+          samples.push({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp,
+          });
+
+          // Good enough — stop early rather than burning the whole window.
+          if (position.coords.accuracy <= ACQUISITION_TARGET_ACCURACY_M) {
+            clearTimeout(timer);
+            finish('granted');
+          }
         },
         (error) => {
+          clearTimeout(timer);
           onError(error);
-          resolve(error.code !== error.PERMISSION_DENIED);
+          finish(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable');
         },
-        GEO_OPTIONS,
+        ACQUIRE_OPTIONS,
       );
     });
 
-    if (!granted) return;
+    setAcquiring(false);
+
+    if (outcome === 'denied') return;
 
     setPermission('granted');
     await applyState('sharing');
-  }, [permission, onPosition, onError, applyState]);
+
+    // Send the acquired fix immediately so the family sees them straight away.
+    if (bestFixRef.current) void send(bestFixRef.current);
+  }, [permission, onError, applyState, send]);
 
   const pauseSharing = React.useCallback(() => applyState('paused'), [applyState]);
   const stopSharing = React.useCallback(() => applyState('off'), [applyState]);
@@ -348,6 +448,8 @@ export function useLocation({
     problem,
     backgroundLimited,
     pending,
+    acquiring,
+    accuracyLabel: describeAccuracy(lastFix?.accuracy ?? null).label,
     startSharing,
     pauseSharing,
     stopSharing,

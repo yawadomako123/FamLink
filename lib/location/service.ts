@@ -14,7 +14,12 @@ import { requireMembership } from '@/lib/permissions/family';
 import { canViewLocation } from '@/lib/permissions/location-visibility';
 import { Errors } from '@/lib/api/errors';
 import { evaluateAndRecordGeofences, type DetectedTransition } from '@/lib/places/service';
-import { displayName, notifyPlaceEvent, notifySharingChanged } from '@/lib/notifications/service';
+import {
+  displayName,
+  notifyLowBattery,
+  notifyPlaceEvent,
+  notifySharingChanged,
+} from '@/lib/notifications/service';
 import { publishEvent } from '@/lib/realtime/publish';
 import type { LocationUpdateInput } from '@/lib/validation/location';
 
@@ -71,6 +76,17 @@ export async function recordLocation(
     throw Errors.forbidden(
       'Location sharing is not switched on for this family. Turn it on before sending updates.',
     );
+  }
+
+  /*
+   * Timed sharing expiry is enforced here, on read of the membership row,
+   * rather than left to a background sweep. If it were only swept, a lapsed
+   * window would keep accepting positions until cleanup happened to run —
+   * which is exactly the moment somebody expected to have become invisible.
+   */
+  if (membership.sharingExpiresAt && membership.sharingExpiresAt.getTime() <= Date.now()) {
+    await expireSharing(userId, input.familyId);
+    throw Errors.forbidden('Your timed location sharing has ended. Turn it on again to share.');
   }
 
   const { familyId, latitude, longitude, accuracy, recordedAt, battery } = input;
@@ -163,6 +179,16 @@ export async function recordLocation(
     }
   }
 
+  /*
+   * Low battery is worth telling the family about: a dying phone is the most
+   * common reason somebody goes quiet, and knowing that beats watching the map
+   * silently stop updating. Alerted at most once per charge cycle — the mark
+   * clears when the phone climbs back above the threshold.
+   */
+  if (battery) {
+    await maybeAlertLowBattery(userId, familyId, battery.percentage, membership.batteryAlertedAt);
+  }
+
   // A hint only — listeners re-fetch through the authorized endpoint, so the
   // visibility rule is applied per viewer rather than trusted here.
   await publishEvent(familyId, 'locations');
@@ -170,9 +196,64 @@ export async function recordLocation(
   return { recordedAt, transitions };
 }
 
+/** Battery level at or below this is worth telling the family about. */
+const LOW_BATTERY_THRESHOLD = 15;
+
+/** Above this, the alert mark is cleared so the next dip can alert again. */
+const BATTERY_RECOVERED_THRESHOLD = 30;
+
+async function maybeAlertLowBattery(
+  userId: string,
+  familyId: string,
+  percentage: number,
+  alertedAt: Date | null,
+): Promise<void> {
+  try {
+    if (percentage >= BATTERY_RECOVERED_THRESHOLD) {
+      // Charged back up — re-arm for the next time it runs down.
+      if (alertedAt) {
+        await db
+          .update(familyMembers)
+          .set({ batteryAlertedAt: null })
+          .where(
+            and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)),
+          );
+      }
+      return;
+    }
+
+    if (percentage > LOW_BATTERY_THRESHOLD || alertedAt) return;
+
+    await db
+      .update(familyMembers)
+      .set({ batteryAlertedAt: new Date() })
+      .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)));
+
+    const name = await displayName(userId).catch(() => 'A family member');
+    await notifyLowBattery(familyId, userId, name, percentage);
+  } catch (error) {
+    console.error('[location] battery alert failed', error);
+  }
+}
+
+/** Clears an elapsed timed-sharing window. */
+async function expireSharing(userId: string, familyId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .update(familyMembers)
+      .set({ locationSharingState: 'off', sharingExpiresAt: null })
+      .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)));
+
+    await tx
+      .delete(currentLocations)
+      .where(and(eq(currentLocations.userId, userId), eq(currentLocations.familyId, familyId)));
+  });
+}
+
 export interface SharingSettings {
   state: LocationSharingState;
   visibility: LocationVisibility;
+  expiresAt: Date | null;
 }
 
 /**
@@ -184,15 +265,36 @@ export interface SharingSettings {
 export async function updateSharingSettings(
   userId: string,
   familyId: string,
-  changes: { state?: LocationSharingState; visibility?: LocationVisibility },
+  changes: {
+    state?: LocationSharingState;
+    visibility?: LocationVisibility;
+    /**
+     * Timed sharing. Sharing reverts to off after this many minutes; null
+     * clears any existing window and shares until switched off.
+     */
+    durationMinutes?: number | null;
+  },
 ): Promise<SharingSettings> {
   await requireMembership(userId, familyId);
+
+  /*
+   * Any change that switches sharing off clears the timer too, so a stale
+   * window cannot silently resume sharing when it is next turned on.
+   */
+  const expiresAt =
+    changes.durationMinutes === undefined
+      ? undefined
+      : changes.durationMinutes === null
+        ? null
+        : new Date(Date.now() + changes.durationMinutes * 60_000);
 
   const [updated] = await db
     .update(familyMembers)
     .set({
       ...(changes.state ? { locationSharingState: changes.state } : {}),
       ...(changes.visibility ? { locationVisibility: changes.visibility } : {}),
+      ...(expiresAt !== undefined ? { sharingExpiresAt: expiresAt } : {}),
+      ...(changes.state === 'off' ? { sharingExpiresAt: null } : {}),
     })
     .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)))
     .returning();
@@ -230,6 +332,7 @@ export async function updateSharingSettings(
   return {
     state: updated.locationSharingState,
     visibility: updated.locationVisibility,
+    expiresAt: updated.sharingExpiresAt,
   };
 }
 
@@ -269,7 +372,7 @@ export async function getFamilyLocations(
 ): Promise<FamilyLocationsResult> {
   const viewer = await requireMembership(viewerId, familyId);
 
-  const members = await db
+  const rawMembers = await db
     .select({
       userId: familyMembers.userId,
       familyId: familyMembers.familyId,
@@ -277,12 +380,28 @@ export async function getFamilyLocations(
       image: users.image,
       locationSharingState: familyMembers.locationSharingState,
       locationVisibility: familyMembers.locationVisibility,
+      sharingExpiresAt: familyMembers.sharingExpiresAt,
       batteryPercentage: familyMembers.batteryPercentage,
       isCharging: familyMembers.isCharging,
     })
     .from(familyMembers)
     .innerJoin(users, eq(users.id, familyMembers.userId))
     .where(eq(familyMembers.familyId, familyId));
+
+  /*
+   * Expiry is applied on read as well as on write.
+   *
+   * A member whose timed window lapsed has state 'sharing' in the row until
+   * something updates it — and nothing does if they simply stopped sending
+   * positions. Without this, "share for one hour" would keep showing the last
+   * known position indefinitely, which is precisely the promise it breaks.
+   */
+  const now = Date.now();
+  const members = rawMembers.map((m) =>
+    m.sharingExpiresAt && m.sharingExpiresAt.getTime() <= now
+      ? { ...m, locationSharingState: 'off' as const }
+      : m,
+  );
 
   // Decide who is visible *before* fetching any coordinates, so coordinates
   // for withheld members are never loaded into memory at all.
