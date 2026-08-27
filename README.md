@@ -19,9 +19,9 @@ Under active development, built in phases. Current state:
 | ----- | ------------------------------------------------ | ------ |
 | 1 | Foundation: auth, database, app shell, PWA | ✅ Done |
 | 2 | Families, invitations, roles, member management | ✅ Done |
-| 3 | Location sharing, permission model, location API | ⬜ Next |
-| 4 | Live family map | ⬜ |
-| 5 | Places and geofencing | ⬜ |
+| 3 | Location sharing, permission model, location API | ✅ Done |
+| 4 | Live family map | ✅ Done |
+| 5 | Places and geofencing | ⬜ Next |
 | 6 | Notifications, arrival alerts, SOS | ⬜ |
 | 7 | Family chat | ⬜ |
 | 8 | Polish, accessibility, performance, security review | ⬜ |
@@ -51,7 +51,7 @@ Under active development, built in phases. Current state:
 | Database | Neon Postgres + Drizzle ORM | Serverless Postgres, typed schema, SQL migrations in the repo |
 | Auth | Better Auth | Handles hashing and sessions; has bearer-token and Expo support |
 | Realtime | SSE over Postgres `LISTEN/NOTIFY` | No third-party message broker |
-| Maps | MapLibre GL | Open source, no proprietary tile lock-in |
+| Maps | MapLibre GL 5 | Open source, no proprietary tile lock-in |
 | File storage | Vercel Blob | Avatar uploads |
 | Validation | Zod | Shared between forms and API routes |
 | Tests | Vitest | |
@@ -304,6 +304,16 @@ bearer token, and background geofencing improves immediately.
 
 ### Other limitations
 
+- **The default map tiles are for development only.** With no
+  `NEXT_PUBLIC_MAP_STYLE_URL` set, FamLink falls back to OpenStreetMap's public
+  raster tiles so a fresh checkout renders a real map. The OSMF tile usage
+  policy does not permit production traffic there — point the variable at
+  MapTiler, Protomaps, Stadia or your own tile server before shipping. No code
+  change is needed.
+- **MapLibre is pinned to 5.x.** Version 6 loads its worker as a separate
+  module resolved against `import.meta.url`, which Next does not serve out of
+  `node_modules`; the browser gets an HTML 404 and rejects it on MIME type.
+  Version 5 inlines the worker.
 - **Rate limiting is per-instance.** The in-process limiter in
   `lib/api/rate-limit.ts` is exact on one instance; across several serverless
   instances the effective limit is (limit × instances). Sufficient to stop a
