@@ -2,26 +2,30 @@
 
 import * as React from 'react';
 import { api, errorMessage } from '@/lib/api/client';
+import { useRealtime, type RealtimeStatus } from './useRealtime';
 import type { FamilyLocationsResponse } from '@/lib/location/types';
 
 /**
  * Keeps the family's positions current.
  *
- * Polls for now. Phase 6 replaces the transport with a Server-Sent Events
- * stream backed by Postgres LISTEN/NOTIFY — this hook's shape is the seam for
- * that swap, so the map and member list will not change when it happens.
+ * Realtime-first, with polling as the safety net rather than the mechanism:
+ * the SSE stream delivers an invalidation hint and this hook re-fetches
+ * through the ordinary authorized endpoint, so the location visibility rule is
+ * applied on every read.
  *
- * Polling pauses while the tab is hidden: a background tab that keeps asking
- * costs the user battery and the server queries, and produces nothing anyone
- * can see.
+ * The poll interval adapts to the transport. While the stream is live a slow
+ * poll only exists to catch a missed hint; when the stream has given up, the
+ * poll becomes the primary mechanism and speeds up.
  */
-const POLL_INTERVAL_MS = 20_000;
+const POLL_LIVE_MS = 120_000;
+const POLL_FALLBACK_MS = 20_000;
 
 export interface UseFamilyLocationsResult extends FamilyLocationsResponse {
   loading: boolean;
   error: string | null;
   /** True once a request has failed and we are showing older data. */
   degraded: boolean;
+  realtimeStatus: RealtimeStatus;
   refresh: () => void;
 }
 
@@ -31,6 +35,21 @@ export function useFamilyLocations(familyId: string): UseFamilyLocationsResult {
   const [nonce, setNonce] = React.useState(0);
 
   const refresh = React.useCallback(() => setNonce((n) => n + 1), []);
+
+  const handleRealtimeEvent = React.useCallback(
+    (type: string) => {
+      // Members changing affects who may be visible, so both invalidate.
+      if (type === 'locations' || type === 'members') refresh();
+    },
+    [refresh],
+  );
+
+  const { status: realtimeStatus } = useRealtime({
+    familyId,
+    onEvent: handleRealtimeEvent,
+  });
+
+  const pollInterval = realtimeStatus === 'live' ? POLL_LIVE_MS : POLL_FALLBACK_MS;
 
   React.useEffect(() => {
     let cancelled = false;
@@ -46,8 +65,8 @@ export function useFamilyLocations(familyId: string): UseFamilyLocationsResult {
         setError(null);
       } catch (err) {
         if (cancelled) return;
-        // Keep the last known data on screen; the map labels its own staleness,
-        // so showing older positions is safe and better than an empty map.
+        // Keep the last known data on screen; the map labels its own
+        // staleness, so older positions are safer than an empty map.
         setError(errorMessage(err));
       } finally {
         if (!cancelled) schedule();
@@ -57,13 +76,15 @@ export function useFamilyLocations(familyId: string): UseFamilyLocationsResult {
     const schedule = () => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
+        // A hidden tab costs battery and server queries for nothing anyone
+        // can see.
         if (document.visibilityState === 'visible') void load();
         else schedule();
-      }, POLL_INTERVAL_MS);
+      }, pollInterval);
     };
 
-    // Refresh immediately when the tab is brought back, rather than waiting
-    // out the remainder of an interval that elapsed while hidden.
+    // Refresh immediately when the tab returns, rather than waiting out an
+    // interval that elapsed while hidden.
     const onVisible = () => {
       if (document.visibilityState === 'visible') void load();
     };
@@ -76,7 +97,7 @@ export function useFamilyLocations(familyId: string): UseFamilyLocationsResult {
       if (timer) clearTimeout(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [familyId, nonce]);
+  }, [familyId, nonce, pollInterval]);
 
   return {
     locations: data?.locations ?? [],
@@ -84,6 +105,7 @@ export function useFamilyLocations(familyId: string): UseFamilyLocationsResult {
     loading: data === null && error === null,
     error,
     degraded: data !== null && error !== null,
+    realtimeStatus,
     refresh,
   };
 }
