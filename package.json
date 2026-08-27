@@ -19,6 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:studio": "drizzle-kit studio",
+    "db:export": "node scripts/export-schema.mjs",
     "db:seed": "tsx --conditions=react-server scripts/seed.ts",
     "icons": "node scripts/generate-icons.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
