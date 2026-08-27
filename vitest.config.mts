@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    setupFiles: ['tests/setup.ts'],
     // Authorization tests share one database; run files sequentially.
     fileParallelism: false,
     testTimeout: 20_000,
