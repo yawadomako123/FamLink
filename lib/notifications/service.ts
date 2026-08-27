@@ -12,6 +12,7 @@ import {
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
+import { filterRecipients } from './preferences';
 
 /**
  * Notifications.
@@ -78,6 +79,12 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
 
       recipients = rows.map((r) => r.userId);
     }
+
+    /*
+     * Respect each member's preferences — except for SOS, which
+     * filterRecipients passes through untouched by design.
+     */
+    recipients = await filterRecipients(input.familyId, recipients, input.type);
 
     if (recipients.length === 0) return;
 
@@ -239,6 +246,30 @@ export async function notifySharingChanged(
       ? `${actorName} turned on location sharing with this family.`
       : `${actorName} turned off location sharing with this family.`,
     data: { actorId },
+    exclude: actorId,
+  });
+}
+
+/**
+ * Low-battery warning.
+ *
+ * A phone about to die is the most common reason a family member goes quiet,
+ * so this is worth telling people about before the map simply stops updating.
+ * Rate-limited by `battery_alerted_at` on the membership row — see
+ * lib/location/service.ts.
+ */
+export async function notifyLowBattery(
+  familyId: string,
+  actorId: string,
+  actorName: string,
+  percentage: number,
+): Promise<void> {
+  await notifyFamily({
+    familyId,
+    type: 'LOCATION_DISABLED',
+    title: `${actorName}'s phone is low`,
+    message: `${actorName} is on ${percentage}% battery. Their location may stop updating soon.`,
+    data: { actorId, percentage, lowBattery: true },
     exclude: actorId,
   });
 }
