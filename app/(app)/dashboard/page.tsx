@@ -6,6 +6,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
+import { DashboardMapCard } from '@/components/map/dashboard-map-card';
 import { StatusDot, type PresenceStatus } from '@/components/ui/status-dot';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
@@ -64,24 +65,12 @@ export default async function DashboardPage() {
           <p className="text-sm text-muted mt-1">
             {others.length === 0
               ? `You're the only one in ${current.name} so far.`
-              : `${others.length} ${others.length === 1 ? 'person' : 'people'} in ${current.name}.`}
+              : `You and ${others.length} ${others.length === 1 ? 'other' : 'others'} in ${current.name}.`}
           </p>
         </div>
 
-        {/*
-          The map is the visual centrepiece of the product, but it needs
-          location data to be worth showing. It arrives in phase 4; until then
-          this states plainly what is missing rather than rendering an empty
-          map that implies nobody is anywhere.
-        */}
-        <Card>
-          <EmptyState
-            icon={MapPin}
-            title="The family map is coming next"
-            description="Once location sharing is switched on, everyone who opts in will appear here."
-            className="py-10"
-          />
-        </Card>
+        {/* The map is the visual centrepiece; the dashboard shows a glance of it. */}
+        <DashboardMapCard familyId={current.id} familyName={current.name} />
 
         <Card>
           <CardHeader className="flex items-center justify-between">
