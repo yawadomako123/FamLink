@@ -36,7 +36,10 @@ All eight phases are complete. What each one delivered:
 - **Family map** — everyone on one map, with honest *Live* versus *Last seen* labelling.
 - **Places** — name the locations that matter (Home, School, Work) with a geofence radius.
 - **Alerts** — arrival and departure events, plus an SOS that reaches the whole family at once.
-- **Chat** — one realtime thread per family with unread counts.
+- **Chat** — one realtime thread per family, with unread counts and reactions.
+- **Voice and video calls** — peer-to-peer WebRTC, up to four people; media never touches the server.
+- **Check-ins** — ask a family member if they're OK, answered in one tap.
+- **Several families** — belong to more than one, with separate sharing settings and alerts for each.
 - **Installable PWA** — works on mobile, tablet and desktop; installs to the home screen.
 
 ---
@@ -150,6 +153,7 @@ reach the browser; everything else is server-only and must never be prefixed.
 | `NEXT_PUBLIC_APP_URL` | Yes | Used to build invitation links |
 | `NEXT_PUBLIC_MAP_STYLE_URL` | No | MapLibre style; falls back to a free OSM raster style |
 | `BLOB_READ_WRITE_TOKEN` | No | Vercel Blob; without it avatar uploads are disabled |
+| `TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` | No | WebRTC relay; without it ~15–20% of calls cannot connect |
 | `RESEND_API_KEY` | No | Password reset email; without it, dev logs to console |
 | `EMAIL_FROM` | No | Sender address for transactional mail |
 
@@ -326,6 +330,24 @@ bearer token, and background geofencing improves immediately.
   module resolved against `import.meta.url`, which Next does not serve out of
   `node_modules`; the browser gets an HTML 404 and rejects it on MIME type.
   Version 5 inlines the worker.
+- **Calls need TURN to be reliable.** WebRTC connects browsers directly, which
+  works for most home broadband using the built-in STUN servers. Behind
+  symmetric NAT, carrier-grade NAT (common on mobile networks) or a restrictive
+  firewall there is no direct path, and roughly 15–20% of calls will fail
+  without a TURN relay. FamLink ships STUN-only and says plainly when a call
+  failed for this reason rather than spinning on "Connecting". Set `TURN_URL`
+  before relying on calls.
+- **Calls are capped at four people.** Every participant holds a peer
+  connection to every other, so upload cost grows with each one. Beyond four a
+  typical phone starts dropping frames. Going further needs an SFU, which is a
+  server component outside this scope — so the cap is enforced and explained
+  rather than allowed to degrade.
+- **Location accuracy has a hardware floor.** Consumer GNSS is roughly 3–10m
+  outdoors, 20–50m in built-up areas, and often 100m+ indoors where the fix
+  comes from Wi-Fi rather than satellites. FamLink filters implausible jumps,
+  prefers more accurate fixes, smooths jitter and samples for a better first
+  fix — but it cannot beat the hardware, and the UI describes precision rather
+  than implying more than it has.
 - **Rate limiting is per-instance.** The in-process limiter in
   `lib/api/rate-limit.ts` is exact on one instance; across several serverless
   instances the effective limit is (limit × instances). Sufficient to stop a
