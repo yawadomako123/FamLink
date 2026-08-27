@@ -7,6 +7,7 @@ import { BottomNav } from './bottom-nav';
 import { Sidebar } from './sidebar';
 import { TopBar, type TopBarUser } from './top-bar';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { CallManager } from '@/components/calls/call-manager';
 import type { FamilySummary } from '@/lib/families/queries';
 import { cn } from '@/lib/utils';
 
@@ -103,6 +104,13 @@ export function AppShell({
 
       {/* Renders only where the browser actually offers an install. */}
       <InstallPrompt />
+
+      {/*
+        Mounted once here rather than per page, so an incoming call reaches
+        somebody wherever they are in FamLink. A call that only rang on the
+        chat page would be worse than no call feature.
+      */}
+      {family && <CallManager familyId={family.id} selfId={user.id} selfName={user.name} />}
     </div>
   );
 }

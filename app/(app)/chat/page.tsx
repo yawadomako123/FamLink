@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { ChatView } from '@/components/chat/chat-view';
+import { StartCallButtons } from '@/components/calls/call-manager';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { listMessages } from '@/lib/chat/service';
@@ -56,6 +57,7 @@ export default async function ChatPage() {
       alertCount={alertCount}
       unreadMessages={unreadMessages}
       title="Chat"
+      headerRight={<StartCallButtons familyId={current.id} compact />}
       fullBleed
     >
       <ChatView
