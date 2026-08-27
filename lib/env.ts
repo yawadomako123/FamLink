@@ -31,6 +31,17 @@ const serverSchema = z.object({
    * firewalls have no direct path. STUN alone covers most home broadband.
    */
   TURN_URL: z.string().optional(),
+  /** Comma-separated, for offering UDP, TCP and TLS transports together. */
+  TURN_URLS: z.string().optional(),
+
+  /**
+   * Preferred. Enables short-lived HMAC credentials (the TURN REST API
+   * scheme) so no long-lived secret is ever handed to a browser. Must match
+   * the relay's `static-auth-secret`.
+   */
+  TURN_STATIC_AUTH_SECRET: z.string().optional(),
+
+  /** Fallback, for hosted providers that issue long-lived credentials. */
   TURN_USERNAME: z.string().optional(),
   TURN_CREDENTIAL: z.string().optional(),
 
@@ -68,21 +79,13 @@ export function isAvatarUploadEnabled(): boolean {
 }
 
 /**
- * TURN credentials, handed to the browser so it can relay media when no direct
- * path exists. These are connection credentials for a relay, not a FamLink
- * secret — the browser cannot use TURN without them.
+ * Whether a TURN relay is configured at all.
+ *
+ * Credentials themselves are issued per user by lib/calls/turn.ts, which
+ * generates short-lived HMAC ones rather than handing out a static secret.
  */
-export function turnConfig(): {
-  url?: string | undefined;
-  username?: string | undefined;
-  credential?: string | undefined;
-} {
-  const env = serverEnv();
-  return {
-    url: env.TURN_URL,
-    username: env.TURN_USERNAME,
-    credential: env.TURN_CREDENTIAL,
-  };
+export function hasTurnConfigured(): boolean {
+  return Boolean(serverEnv().TURN_URL);
 }
 
 /* -------------------------------------------------------------------------- */

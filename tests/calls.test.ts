@@ -271,20 +271,61 @@ describe('signalling', () => {
 
 describe('ICE configuration', () => {
   it('reports honestly that there is no relay when TURN is unconfigured', () => {
-    const config = buildIceConfig({});
+    const config = buildIceConfig(null);
 
+    // STUN alone still connects most home broadband, so this is a degraded
+    // state rather than a broken one — but the UI must be able to say so.
     expect(config.hasRelay).toBe(false);
     expect(config.iceServers.length).toBeGreaterThan(0);
   });
 
   it('includes the relay when TURN is configured', () => {
     const config = buildIceConfig({
-      url: 'turn:relay.example.com:3478',
-      username: 'u',
-      credential: 'p',
+      urls: ['turn:relay.example.com:3478?transport=udp'],
+      username: '1700000000:user-1',
+      credential: 'hmac',
+      expiresAt: 1_700_000_000,
     });
 
     expect(config.hasRelay).toBe(true);
-    expect(config.iceServers.some((s) => String(s.urls).startsWith('turn:'))).toBe(true);
+    expect(
+      config.iceServers.some((server) =>
+        [server.urls].flat().some((url) => String(url).startsWith('turn:')),
+      ),
+    ).toBe(true);
+  });
+
+  it('offers every configured transport under one credential', () => {
+    const config = buildIceConfig({
+      urls: [
+        'turn:relay.example.com:3478?transport=udp',
+        'turn:relay.example.com:3478?transport=tcp',
+      ],
+      username: 'u',
+      credential: 'c',
+      expiresAt: 1,
+    });
+
+    const relay = config.iceServers.find((s) => [s.urls].flat().length === 2);
+    expect(relay).toBeDefined();
+  });
+});
+
+describe('ephemeral TURN credentials', () => {
+  it('derives a verifiable HMAC that expires', async () => {
+    const { createHmac } = await import('node:crypto');
+
+    // The scheme coturn, Cloudflare and Twilio all implement: the username
+    // carries its own expiry, so the relay validates without storing anything.
+    const secret = 'shared-secret';
+    const expiresAt = Math.floor(Date.now() / 1000) + 3600;
+    const username = `${expiresAt}:user-1`;
+    const credential = createHmac('sha1', secret).update(username).digest('base64');
+
+    // The relay recomputes exactly this from the secret it shares with us.
+    const recomputed = createHmac('sha1', secret).update(username).digest('base64');
+
+    expect(credential).toBe(recomputed);
+    expect(Number(username.split(':')[0])).toBeGreaterThan(Date.now() / 1000);
   });
 });

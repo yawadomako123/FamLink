@@ -25,6 +25,8 @@ export interface IceConfig {
   iceServers: RTCIceServer[];
   /** False when only STUN is available, so the UI can set expectations. */
   hasRelay: boolean;
+  /** Unix seconds; present when credentials are time-limited. */
+  relayExpiresAt?: number;
 }
 
 /**
@@ -41,21 +43,31 @@ const PUBLIC_STUN: RTCIceServer[] = [
 ];
 
 export function buildIceConfig(turn?: {
-  url?: string | undefined;
-  username?: string | undefined;
-  credential?: string | undefined;
-}): IceConfig {
+  urls: string[];
+  username: string;
+  credential: string;
+  expiresAt: number;
+} | null): IceConfig {
   const iceServers = [...PUBLIC_STUN];
 
-  if (turn?.url) {
+  if (turn && turn.urls.length > 0) {
+    /*
+     * One entry carrying every transport, so ICE tries UDP first and falls
+     * back to TCP/TLS on the same credentials. TLS on 443 is what gets through
+     * firewalls that block everything else.
+     */
     iceServers.push({
-      urls: turn.url,
+      urls: turn.urls,
       ...(turn.username ? { username: turn.username } : {}),
       ...(turn.credential ? { credential: turn.credential } : {}),
     });
   }
 
-  return { iceServers, hasRelay: Boolean(turn?.url) };
+  return {
+    iceServers,
+    hasRelay: Boolean(turn && turn.urls.length > 0),
+    ...(turn ? { relayExpiresAt: turn.expiresAt } : {}),
+  };
 }
 
 /**

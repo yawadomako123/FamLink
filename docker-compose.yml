@@ -22,5 +22,46 @@ services:
       timeout: 5s
       retries: 10
 
+  # Local TURN relay, so voice/video calls can be tested end to end without a
+  # hosted provider. Uses the same ephemeral-credential scheme as production
+  # (coturn's `use-auth-secret`), so what works here works there.
+  #
+  # Not a production deployment: no TLS, a committed development secret, and a
+  # deliberately small relay-port range.
+  #
+  # Ports are mapped explicitly rather than using `network_mode: host`, which
+  # is silently useless on Docker Desktop for Windows and macOS — the container
+  # joins the Linux VM's network, not the host's, so nothing on the host can
+  # reach it.
+  coturn:
+    image: coturn/coturn:latest
+    container_name: famlink-coturn
+    restart: unless-stopped
+    ports:
+      - '3478:3478/tcp'
+      - '3478:3478/udp'
+      # Relay allocations. Narrow on purpose: every port here is published.
+      - '49160-49200:49160-49200/udp'
+    command:
+      - --listening-port=3478
+      - --listening-ip=0.0.0.0
+      # What coturn advertises in relay candidates. Without it the container's
+      # private address is offered, which no browser on the host can reach.
+      - --external-ip=127.0.0.1
+      - --fingerprint
+      - --use-auth-secret
+      - --static-auth-secret=famlink_dev_turn_secret
+      - --realm=famlink.local
+      - --no-tls
+      - --no-dtls
+      - --no-multicast-peers
+      - --min-port=49160
+      - --max-port=49200
+      - --log-file=stdout
+      - --simple-log
+      - --no-cli
+      # Allow loopback peers; a local test relays between two local browsers.
+      - --allow-loopback-peers
+
 volumes:
   pgdata:
