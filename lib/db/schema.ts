@@ -690,6 +690,25 @@ export const messageReactions = pgTable(
 );
 
 /* ========================================================================== */
+/* Push Subscriptions                                                          */
+/* ========================================================================== */
+
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    token: text('token').notNull().unique(),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index('push_subscriptions_user_idx').on(t.userId)],
+);
+
+/* ========================================================================== */
 /* Relations                                                                   */
 /* ========================================================================== */
 
@@ -745,6 +764,7 @@ export type Call = typeof calls.$inferSelect;
 export type CallSignal = typeof callSignals.$inferSelect;
 export type CheckInRequest = typeof checkInRequests.$inferSelect;
 export type MessageReaction = typeof messageReactions.$inferSelect;
+export type PushSubscription = typeof pushSubscriptions.$inferSelect;
 
 export type CallKind = (typeof callKind.enumValues)[number];
 export type CallStatus = (typeof callStatus.enumValues)[number];

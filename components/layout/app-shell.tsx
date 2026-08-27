@@ -7,6 +7,7 @@ import { BottomNav } from './bottom-nav';
 import { Sidebar } from './sidebar';
 import { TopBar, type TopBarUser } from './top-bar';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
+import { FirebaseToken } from '@/components/pwa/firebase-token';
 import { CallManager } from '@/components/calls/call-manager';
 import type { FamilySummary } from '@/lib/families/queries';
 import { cn } from '@/lib/utils';
@@ -104,6 +105,7 @@ export function AppShell({
 
       {/* Renders only where the browser actually offers an install. */}
       <InstallPrompt />
+      <FirebaseToken />
 
       {/*
         Mounted once here rather than per page, so an incoming call reaches

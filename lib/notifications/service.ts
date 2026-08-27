@@ -5,10 +5,12 @@ import { db } from '@/lib/db';
 import {
   familyMembers,
   notifications,
+  pushSubscriptions,
   users,
   type Notification,
   type NotificationType,
 } from '@/lib/db/schema';
+import { sendPushNotification } from '@/lib/firebase/server';
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
@@ -100,6 +102,25 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
     );
 
     await publishEvent(input.familyId, 'notification');
+
+    if (recipients.length > 0) {
+      const subs = await db
+        .select({ token: pushSubscriptions.token })
+        .from(pushSubscriptions)
+        .where(inArray(pushSubscriptions.userId, recipients));
+      
+      // Push notifications are fired in the background
+      Promise.allSettled(
+        subs.map(sub => 
+          sendPushNotification(
+            sub.token, 
+            input.title, 
+            input.message, 
+            input.data ? (input.data as Record<string, string>) : undefined
+          )
+        )
+      ).catch(err => console.error('[notifications] FCM push failed', err));
+    }
   } catch (error) {
     console.error('[notifications] delivery failed', error);
   }

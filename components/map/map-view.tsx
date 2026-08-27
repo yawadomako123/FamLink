@@ -195,7 +195,7 @@ export function MapView({
                     size="md"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-fg truncate">{person.name}</p>
+                    <p className="text-sm font-medium text-fg break-words text-wrap">{person.name}</p>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <StatusDot status={entry.reason === 'paused' ? 'paused' : 'offline'} />
                       <span className="text-xs text-muted">{WITHHELD_COPY[entry.reason]}</span>
@@ -250,7 +250,7 @@ function MemberRow({
         <Avatar name={location.name} userId={location.userId} image={location.image} size="md" />
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-fg truncate">{location.name}</p>
+          <p className="text-sm font-medium text-fg break-words text-wrap">{location.name}</p>
           <div className="flex items-center gap-1.5 mt-0.5">
             <StatusDot status={status} />
             <span className="text-xs text-muted">

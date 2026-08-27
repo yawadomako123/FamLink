@@ -345,7 +345,7 @@ function MemberRow({
       <Avatar name={member.name} userId={member.userId} image={member.image} size="md" />
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-fg truncate">
+        <p className="text-sm font-medium text-fg break-words text-wrap">
           {member.name}
           {isSelf && <span className="text-muted font-normal"> (you)</span>}
         </p>
