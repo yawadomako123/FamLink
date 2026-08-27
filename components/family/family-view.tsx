@@ -20,6 +20,7 @@ import { Alert, EmptyState } from '@/components/ui/feedback';
 import { StatusDot } from '@/components/ui/status-dot';
 import { Input } from '@/components/ui/input';
 import { InviteDialog } from './invite-dialog';
+import { AskCheckInButton } from '@/components/checkins/check-in-panel';
 import { api, errorMessage } from '@/lib/api/client';
 import { timeAgo } from '@/lib/time';
 import { cn } from '@/lib/utils';
@@ -138,6 +139,7 @@ export function FamilyView({
             <MemberRow
               key={member.userId}
               member={member}
+              familyId={family.id}
               isSelf={member.userId === viewerId}
               viewerRole={family.role}
               busy={busy}
@@ -300,6 +302,7 @@ export function FamilyView({
 
 function MemberRow({
   member,
+  familyId,
   isSelf,
   viewerRole,
   busy,
@@ -308,6 +311,7 @@ function MemberRow({
   onTransfer,
 }: {
   member: FamilyMemberView;
+  familyId: string;
   isSelf: boolean;
   viewerRole: FamilyRole;
   busy: boolean;
@@ -360,6 +364,15 @@ function MemberRow({
           </span>
         </div>
       </div>
+
+      {/* Asking somebody if they are OK needs no role or permission. */}
+      {!isSelf && (
+        <AskCheckInButton
+          familyId={familyId}
+          targetId={member.userId}
+          targetName={member.name}
+        />
+      )}
 
       <span
         className={cn(

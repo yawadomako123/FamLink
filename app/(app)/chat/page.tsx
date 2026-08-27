@@ -9,7 +9,7 @@ import { ChatView } from '@/components/chat/chat-view';
 import { StartCallButtons } from '@/components/calls/call-manager';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
-import { listMessages } from '@/lib/chat/service';
+import { getReactions, listMessages } from '@/lib/chat/service';
 import { getMembership } from '@/lib/permissions/family';
 
 export const metadata: Metadata = { title: 'Chat' };
@@ -46,6 +46,12 @@ export default async function ChatPage() {
     getMembership(session.user.id, current.id),
   ]);
 
+  const reactions = await getReactions(
+    session.user.id,
+    current.id,
+    recent.map((m) => m.id),
+  );
+
   const canModerate = membership?.role === 'owner' || membership?.role === 'admin';
 
   return (
@@ -74,6 +80,7 @@ export default async function ChatPage() {
           content: m.content,
           deleted: m.deleted,
           createdAt: m.createdAt.toISOString(),
+          reactions: reactions.get(m.id) ?? [],
         }))}
       />
     </AppShell>

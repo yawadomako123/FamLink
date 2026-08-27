@@ -3,6 +3,7 @@ import { authedRoute, ok, parseBody, parseQuery } from '@/lib/api/handler';
 import { enforceRateLimit } from '@/lib/api/rate-limit';
 import {
   countUnreadMessages,
+  getReactions,
   listMessages,
   listMessagesSince,
   sendMessage,
@@ -34,9 +35,20 @@ export const GET = authedRoute<{ familyId: string }>(async (req, { params, sessi
         ...(before ? { before: new Date(before) } : {}),
       });
 
-  const unread = await countUnreadMessages(session.user.id, familyId);
+  const [unread, reactions] = await Promise.all([
+    countUnreadMessages(session.user.id, familyId),
+    getReactions(
+      session.user.id,
+      familyId,
+      items.map((m) => m.id),
+    ),
+  ]);
 
-  return ok({ messages: items, unread, append: Boolean(since) });
+  return ok({
+    messages: items.map((m) => ({ ...m, reactions: reactions.get(m.id) ?? [] })),
+    unread,
+    append: Boolean(since),
+  });
 });
 
 export const POST = authedRoute<{ familyId: string }>(async (req, { params, session }) => {

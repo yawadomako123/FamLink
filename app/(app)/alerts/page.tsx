@@ -11,6 +11,8 @@ import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { listNotifications } from '@/lib/notifications/service';
 import { listActiveEmergencies } from '@/lib/notifications/emergency';
+import { listPendingForMe } from '@/lib/checkins/service';
+import { CheckInPanel } from '@/components/checkins/check-in-panel';
 
 export const metadata: Metadata = { title: 'Alerts' };
 
@@ -41,9 +43,10 @@ export default async function AlertsPage() {
     );
   }
 
-  const [notifications, emergencies] = await Promise.all([
+  const [notifications, emergencies, pendingCheckIns] = await Promise.all([
     listNotifications(session.user.id, current.id),
     listActiveEmergencies(session.user.id, current.id),
+    listPendingForMe(session.user.id, current.id),
   ]);
 
   return (
@@ -57,6 +60,22 @@ export default async function AlertsPage() {
       title="Alerts"
       headerRight={<SosButton familyId={current.id} familyName={current.name} compact />}
     >
+      {/* Above the alert list: a question waiting on you outranks a log. */}
+      {pendingCheckIns.length > 0 && (
+        <div className="px-4 md:px-6 pt-6 max-w-2xl">
+          <CheckInPanel
+            familyId={current.id}
+            pending={pendingCheckIns.map((c) => ({
+              id: c.id,
+              requesterId: c.requesterId,
+              requesterName: c.requesterName,
+              note: c.note,
+              createdAt: c.createdAt.toISOString(),
+            }))}
+          />
+        </div>
+      )}
+
       <AlertsView
         familyId={current.id}
         viewerId={session.user.id}

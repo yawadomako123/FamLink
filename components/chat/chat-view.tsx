@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { MessageCircle, MoreVertical, SendHorizontal, Trash2 } from 'lucide-react';
+import { MessageCircle, MoreVertical, SendHorizontal, SmilePlus, Trash2 } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Alert, EmptyState } from '@/components/ui/feedback';
@@ -9,6 +9,15 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { api, errorMessage } from '@/lib/api/client';
 import { formatClock, formatDayLabel } from '@/lib/time';
 import { avatarColor, cn } from '@/lib/utils';
+
+export interface MessageReactionSummary {
+  emoji: string;
+  count: number;
+  userIds: string[];
+}
+
+/** Mirrors ALLOWED_REACTIONS on the server; the API rejects anything else. */
+const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
 
 export interface ChatMessage {
   id: string;
@@ -18,6 +27,7 @@ export interface ChatMessage {
   content: string;
   deleted: boolean;
   createdAt: string;
+  reactions?: MessageReactionSummary[];
   /** Set on messages shown before the server has confirmed them. */
   pending?: boolean;
   failed?: boolean;
@@ -172,6 +182,53 @@ export function ChatView({
     [familyId, viewerId],
   );
 
+  const react = React.useCallback(
+    async (messageId: string, emoji: string) => {
+      /*
+       * Applied locally first so the tap feels instant, then reconciled from
+       * the server's own count on the next refresh.
+       */
+      setMessages((current) =>
+        current.map((m) => {
+          if (m.id !== messageId) return m;
+
+          const existing = m.reactions ?? [];
+          const mine = existing.find((r) => r.userIds.includes(viewerId));
+          const removing = mine?.emoji === emoji;
+
+          const withoutMine = existing
+            .map((r) => ({ ...r, userIds: r.userIds.filter((id) => id !== viewerId) }))
+            .map((r) => ({ ...r, count: r.userIds.length }))
+            .filter((r) => r.count > 0);
+
+          if (removing) return { ...m, reactions: withoutMine };
+
+          const target = withoutMine.find((r) => r.emoji === emoji);
+          if (target) {
+            target.userIds = [...target.userIds, viewerId];
+            target.count += 1;
+            return { ...m, reactions: [...withoutMine] };
+          }
+
+          return {
+            ...m,
+            reactions: [...withoutMine, { emoji, count: 1, userIds: [viewerId] }],
+          };
+        }),
+      );
+
+      try {
+        await api.post(`/api/v1/families/${familyId}/messages/${messageId}/reactions`, {
+          emoji,
+        });
+      } catch (err) {
+        setError(errorMessage(err));
+        void appendNew();
+      }
+    },
+    [familyId, viewerId, appendNew],
+  );
+
   async function remove(messageId: string) {
     setError(null);
     try {
@@ -256,8 +313,10 @@ export function ChatView({
                       isOwn={message.senderId === viewerId}
                       grouped={grouped}
                       canDelete={message.senderId === viewerId || canModerate}
+                      viewerId={viewerId}
                       onRetry={() => void send(message.content, message.id)}
                       onDelete={() => void remove(message.id)}
+                      onReact={(emoji) => void react(message.id, emoji)}
                     />
                   );
                 })}
@@ -321,17 +380,22 @@ function MessageRow({
   isOwn,
   grouped,
   canDelete,
+  viewerId,
   onRetry,
   onDelete,
+  onReact,
 }: {
   message: ChatMessage;
   isOwn: boolean;
   grouped: boolean;
   canDelete: boolean;
+  viewerId: string;
   onRetry: () => void;
   onDelete: () => void;
+  onReact: (emoji: string) => void;
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const [pickerOpen, setPickerOpen] = React.useState(false);
 
   if (message.deleted) {
     return (
@@ -367,6 +431,43 @@ function MessageRow({
         )}
 
         <div className="flex items-end gap-1.5">
+          {!message.pending && (
+            <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+              <button
+                type="button"
+                onClick={() => setPickerOpen((v) => !v)}
+                aria-label="Add a reaction"
+                aria-expanded={pickerOpen}
+                className="size-7 rounded-lg flex items-center justify-center text-subtle hover:text-fg"
+              >
+                <SmilePlus aria-hidden className="size-3.5" />
+              </button>
+
+              {pickerOpen && (
+                <div
+                  role="menu"
+                  className="absolute bottom-full mb-1 left-0 flex gap-0.5 p-1 bg-card border border-line rounded-xl shadow-lift z-20"
+                >
+                  {REACTIONS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      role="menuitem"
+                      aria-label={`React with ${emoji}`}
+                      onClick={() => {
+                        setPickerOpen(false);
+                        onReact(emoji);
+                      }}
+                      className="size-8 rounded-lg text-base leading-none hover:bg-raised transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {isOwn && canDelete && !message.pending && (
             <div className="relative opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
               <button
@@ -408,6 +509,33 @@ function MessageRow({
             {message.content}
           </div>
         </div>
+
+        {message.reactions && message.reactions.length > 0 && (
+          <div className={cn('flex flex-wrap gap-1 mt-1', isOwn && 'justify-end')}>
+            {message.reactions.map((reaction) => {
+              const mine = reaction.userIds.includes(viewerId);
+
+              return (
+                <button
+                  key={reaction.emoji}
+                  type="button"
+                  onClick={() => onReact(reaction.emoji)}
+                  aria-pressed={mine}
+                  aria-label={`${reaction.emoji}, ${reaction.count}${mine ? ', including you' : ''}`}
+                  className={cn(
+                    'inline-flex items-center gap-1 h-6 px-1.5 rounded-full border text-xs transition-colors tabular-nums',
+                    mine
+                      ? 'border-brand-500 bg-tint-brand text-on-tint-brand'
+                      : 'border-line bg-card text-muted hover:bg-raised',
+                  )}
+                >
+                  <span aria-hidden>{reaction.emoji}</span>
+                  {reaction.count > 1 && reaction.count}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         <p
           suppressHydrationWarning
