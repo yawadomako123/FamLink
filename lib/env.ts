@@ -25,6 +25,15 @@ const serverSchema = z.object({
   /** Optional: without it, avatar uploads are disabled rather than broken. */
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
 
+  /*
+   * TURN relay for WebRTC. Optional, but without it roughly 15-20% of calls
+   * cannot connect — symmetric NAT, carrier-grade NAT and restrictive
+   * firewalls have no direct path. STUN alone covers most home broadband.
+   */
+  TURN_URL: z.string().optional(),
+  TURN_USERNAME: z.string().optional(),
+  TURN_CREDENTIAL: z.string().optional(),
+
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 });
 
@@ -56,6 +65,24 @@ export function unpooledDatabaseUrl(): string {
 
 export function isAvatarUploadEnabled(): boolean {
   return Boolean(serverEnv().BLOB_READ_WRITE_TOKEN);
+}
+
+/**
+ * TURN credentials, handed to the browser so it can relay media when no direct
+ * path exists. These are connection credentials for a relay, not a FamLink
+ * secret — the browser cannot use TURN without them.
+ */
+export function turnConfig(): {
+  url?: string | undefined;
+  username?: string | undefined;
+  credential?: string | undefined;
+} {
+  const env = serverEnv();
+  return {
+    url: env.TURN_URL,
+    username: env.TURN_USERNAME,
+    credential: env.TURN_CREDENTIAL,
+  };
 }
 
 /* -------------------------------------------------------------------------- */

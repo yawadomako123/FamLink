@@ -28,7 +28,13 @@ export type RealtimeEventType =
   | 'message'
   | 'notification'
   | 'emergency'
-  | 'members';
+  | 'members'
+  /**
+   * A call changed: someone started, joined, left one, or sent a signalling
+   * message. Like every other event this carries no payload — the client
+   * fetches the call state and any signals addressed to it.
+   */
+  | 'call';
 
 export interface RealtimeEvent {
   /** Which family the change belongs to. Used for server-side filtering. */

@@ -85,7 +85,14 @@ export function useRealtime({
         onEventRef.current(type);
       };
 
-      for (const type of ['locations', 'message', 'notification', 'emergency', 'members'] as const) {
+      for (const type of [
+        'locations',
+        'message',
+        'notification',
+        'emergency',
+        'members',
+        'call',
+      ] as const) {
         source.addEventListener(type, handle(type));
       }
 
