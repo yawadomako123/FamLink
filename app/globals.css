@@ -1,0 +1,225 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode on top of the system preference. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---------------------------------------------------------------------------
+   FamLink design tokens
+
+   The palette is deliberately calm: a teal brand that reads as "safe" rather
+   than "alarming", warm neutrals so the app feels domestic rather than
+   institutional, and a single high-saturation red reserved exclusively for
+   emergencies. Nothing else in the product is allowed to use danger red —
+   that is what makes the SOS affordance legible.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Brand — teal */
+  --color-brand-50: #eefbf7;
+  --color-brand-100: #d3f5eb;
+  --color-brand-200: #aaead9;
+  --color-brand-300: #74d9c2;
+  --color-brand-400: #3ec0a6;
+  --color-brand-500: #1ea58c;
+  --color-brand-600: #128472;
+  --color-brand-700: #12695d;
+  --color-brand-800: #13544c;
+  --color-brand-900: #134640;
+  --color-brand-950: #042b28;
+
+  /* Warm neutrals */
+  --color-sand-50: #faf9f7;
+  --color-sand-100: #f4f2ee;
+  --color-sand-200: #e8e4dd;
+  --color-sand-300: #d6d0c5;
+  --color-sand-400: #b0a89a;
+  --color-sand-500: #8a8073;
+  --color-sand-600: #6b6257;
+  --color-sand-700: #554e46;
+  --color-sand-800: #3a3531;
+  --color-sand-900: #23201d;
+  --color-sand-950: #161412;
+
+  /* Status */
+  --color-status-sharing: #16a34a;
+  --color-status-paused: #d97706;
+  --color-status-offline: #9ca3af;
+  --color-status-stale: #a16207;
+
+  /* Emergency — reserved for SOS only */
+  --color-danger-50: #fff1f2;
+  --color-danger-100: #ffe4e6;
+  --color-danger-500: #f43f5e;
+  --color-danger-600: #e11d48;
+  --color-danger-700: #be123c;
+
+  /* Typography */
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+
+  /* Radii — rounded, friendly, consistent */
+  --radius-card: 1rem;
+  --radius-sheet: 1.5rem;
+
+  /* Soft shadows, never harsh */
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px -4px rgb(0 0 0 / 0.08);
+  --shadow-lift: 0 2px 4px rgb(0 0 0 / 0.05), 0 12px 32px -8px rgb(0 0 0 / 0.14);
+
+  /* Motion */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ---------------------------------------------------------------------------
+   Semantic surface tokens — these flip for dark mode so components never need
+   to spell out light/dark pairs themselves.
+--------------------------------------------------------------------------- */
+:root {
+  --surface-app: var(--color-sand-100);
+  --surface-card: #ffffff;
+  --surface-raised: var(--color-sand-50);
+  --surface-inset: var(--color-sand-100);
+  --border-subtle: var(--color-sand-200);
+  --border-strong: var(--color-sand-300);
+  --fg-default: var(--color-sand-900);
+  --fg-muted: var(--color-sand-600);
+  --fg-subtle: var(--color-sand-500);
+  --fg-on-brand: #ffffff;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --surface-app: var(--color-sand-950);
+    --surface-card: var(--color-sand-900);
+    --surface-raised: var(--color-sand-800);
+    --surface-inset: #100e0d;
+    --border-subtle: #322d29;
+    --border-strong: #453e38;
+    --fg-default: var(--color-sand-100);
+    --fg-muted: var(--color-sand-400);
+    --fg-subtle: var(--color-sand-500);
+    --fg-on-brand: #ffffff;
+
+    color-scheme: dark;
+  }
+}
+
+:root.dark {
+  --surface-app: var(--color-sand-950);
+  --surface-card: var(--color-sand-900);
+  --surface-raised: var(--color-sand-800);
+  --surface-inset: #100e0d;
+  --border-subtle: #322d29;
+  --border-strong: #453e38;
+  --fg-default: var(--color-sand-100);
+  --fg-muted: var(--color-sand-400);
+  --fg-subtle: var(--color-sand-500);
+  --fg-on-brand: #ffffff;
+
+  color-scheme: dark;
+}
+
+/* Expose the semantic tokens to Tailwind utilities (bg-surface, text-muted, …). */
+@theme inline {
+  --color-surface: var(--surface-app);
+  --color-card: var(--surface-card);
+  --color-raised: var(--surface-raised);
+  --color-inset: var(--surface-inset);
+  --color-line: var(--border-subtle);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--fg-default);
+  --color-muted: var(--fg-muted);
+  --color-subtle: var(--fg-subtle);
+  --color-on-brand: var(--fg-on-brand);
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--surface-app);
+    color: var(--fg-default);
+    font-family: var(--font-sans);
+    /* Respect notches and home indicators when installed as a PWA. */
+    min-height: 100dvh;
+    overscroll-behavior-y: none;
+  }
+
+  /* A single, consistent focus treatment across the whole product. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  /* Honour reduced-motion for every animation the app defines. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Safe-area helpers for installed PWAs. */
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .mb-safe {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Skeleton shimmer used by loading states. */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--surface-inset) 25%,
+      var(--border-subtle) 37%,
+      var(--surface-inset) 63%
+    );
+    background-size: 400% 100%;
+    animation: famlink-shimmer 1.4s ease infinite;
+  }
+
+  @keyframes famlink-shimmer {
+    0% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0 50%;
+    }
+  }
+
+  /* Emergency pulse — used only by the SOS control. */
+  .sos-pulse {
+    animation: famlink-sos-pulse 2s var(--ease-out-soft) infinite;
+  }
+
+  @keyframes famlink-sos-pulse {
+    0% {
+      box-shadow: 0 0 0 0 rgb(225 29 72 / 0.45);
+    }
+    70% {
+      box-shadow: 0 0 0 14px rgb(225 29 72 / 0);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgb(225 29 72 / 0);
+    }
+  }
+}
