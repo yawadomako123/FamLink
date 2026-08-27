@@ -22,5 +22,13 @@ export const POST = authedRoute(async (req, { session }) => {
   const input = await parseBody(req, locationUpdateSchema);
   const result = await recordLocation(session.user.id, input);
 
-  return ok({ recordedAt: result.recordedAt }, { status: 201 });
+  /*
+   * Transitions are returned so the sending client can confirm immediately
+   * ("You arrived at Home") without waiting for a notification round trip.
+   * They name a place, never a coordinate.
+   */
+  return ok(
+    { recordedAt: result.recordedAt, transitions: result.transitions },
+    { status: 201 },
+  );
 });
