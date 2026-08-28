@@ -94,6 +94,19 @@ export const users = pgTable('users', {
     .notNull()
     .default(sql`false`),
   image: text('image'),
+  /**
+   * The family this user was last looking at.
+   *
+   * A cookie alone could not carry this: it is per-device, so signing in on a
+   * new phone — or in a private window, or after clearing site data — dropped
+   * the preference and silently fell back to the oldest family. The cookie is
+   * still consulted first, because two devices may reasonably sit on different
+   * families; this is what survives when there is no cookie to read.
+   *
+   * Nulled rather than cascaded when the family goes away: losing a family
+   * should reset the preference, never delete the person.
+   */
+  lastFamilyId: uuid('last_family_id'),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 });
