@@ -18,7 +18,21 @@ if (!getApps().length) {
 
 export const adminMessaging = getApps().length ? getMessaging() : null;
 
-export async function sendPushNotification(token: string, title: string, body: string, data?: Record<string, string>) {
+export async function sendPushNotification(
+  token: string,
+  title: string,
+  body: string,
+  data?: Record<string, string>,
+  /**
+   * Groups notifications that supersede one another.
+   *
+   * A family group chat sends one of these per message, and a stack of eleven
+   * "Ama: ok" is how a person ends up turning notifications off. Sharing a tag
+   * makes each new one replace the last, so the tray holds the latest rather
+   * than the history.
+   */
+  tag?: string,
+) {
   if (!adminMessaging) {
     console.warn('Firebase Admin Messaging is not available.');
     return false;
@@ -31,7 +45,18 @@ export async function sendPushNotification(token: string, title: string, body: s
         title,
         body,
       },
-      data,
+      /*
+       * The tag is repeated inside `data` on purpose. A service worker that
+       * handles onBackgroundMessage builds its own notification options, so
+       * the webpush tag below never reaches it — it has to read it from here.
+       */
+      data: tag ? { ...(data ?? {}), tag } : data,
+      ...(tag
+        ? {
+            android: { collapseKey: tag, notification: { tag } },
+            webpush: { notification: { tag, renotify: true } },
+          }
+        : {}),
     };
     await adminMessaging.send(message);
     return true;

@@ -27,8 +27,9 @@ export function Sidebar({
   unreadMessages?: number;
 }) {
   const pathname = usePathname();
-  const primary = NAV_ITEMS.filter((i) => i.primary && i.href !== '/profile');
-  const secondary = NAV_ITEMS.filter((i) => !i.primary);
+  const primary = NAV_ITEMS.filter((i) => i.primary);
+  // Profile stays in the header's account menu on desktop, as it always has.
+  const secondary = NAV_ITEMS.filter((i) => !i.primary && i.href !== '/profile');
 
   const renderItem = (item: (typeof NAV_ITEMS)[number]) => {
     const active = isActivePath(pathname, item.href);

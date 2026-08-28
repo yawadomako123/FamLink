@@ -9,6 +9,7 @@ import { TopBar, type TopBarUser } from './top-bar';
 import { InstallPrompt } from '@/components/pwa/install-prompt';
 import { FirebaseToken } from '@/components/pwa/firebase-token';
 import { CallManager } from '@/components/calls/call-manager';
+import { BadgeRefresh } from './badge-refresh';
 import type { FamilySummary } from '@/lib/families/queries';
 import { cn } from '@/lib/utils';
 
@@ -80,6 +81,8 @@ export function AppShell({
           user={user}
           title={title}
           right={headerRight}
+          family={family}
+          families={families}
           onSignOut={() => void handleSignOut()}
         />
 
@@ -101,7 +104,7 @@ export function AppShell({
         </main>
       </div>
 
-      <BottomNav alertCount={alertCount} />
+      <BottomNav alertCount={alertCount} unreadMessages={unreadMessages} />
 
       {/* Renders only where the browser actually offers an install. */}
       <InstallPrompt />
@@ -113,6 +116,9 @@ export function AppShell({
         chat page would be worse than no call feature.
       */}
       {family && <CallManager familyId={family.id} selfId={user.id} selfName={user.name} />}
+
+      {/* Keeps the nav badges current without a navigation. */}
+      {family && <BadgeRefresh familyId={family.id} />}
     </div>
   );
 }

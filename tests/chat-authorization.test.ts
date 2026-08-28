@@ -16,6 +16,8 @@ import {
   markThreadRead,
   sendMessage,
 } from '@/lib/chat/service';
+import { listNotifications } from '@/lib/notifications/service';
+import { updatePreferences } from '@/lib/notifications/preferences';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
 async function expectApiError(promise: Promise<unknown>, status: number) {
@@ -226,3 +228,61 @@ describe('unread counts', () => {
     await expectApiError(countUnreadMessages(outsider.id, familyId), 404);
   });
 });
+
+/* ========================================================================== */
+
+/**
+ * Chat notifications.
+ *
+ * `notification_preferences.chat_messages` shipped with the settings screen and
+ * governed nothing: sending a message published an in-app realtime hint and
+ * stopped there. With the app closed there was no way to learn a message had
+ * arrived, and on a phone there was no badge either.
+ */
+describe('notifying', () => {
+  it('tells the rest of the family, but not the sender', async () => {
+    await sendMessage(member.id, familyId, 'dinner at 7');
+
+    const forOwner = await listNotifications(owner.id, familyId);
+    const forAdmin = await listNotifications(admin.id, familyId);
+    const forSender = await listNotifications(member.id, familyId);
+
+    expect(forOwner).toHaveLength(1);
+    expect(forOwner[0]?.type).toBe('NEW_MESSAGE');
+    expect(forOwner[0]?.title).toBe('Kofi Member');
+    expect(forOwner[0]?.message).toBe('dinner at 7');
+
+    expect(forAdmin).toHaveLength(1);
+    expect(forSender, 'the sender never notifies themselves').toHaveLength(0);
+  });
+
+  it('respects a member who turned chat notifications off', async () => {
+    await updatePreferences(admin.id, familyId, { chatMessages: false });
+
+    await sendMessage(member.id, familyId, 'still going ahead');
+
+    expect(await listNotifications(admin.id, familyId)).toHaveLength(0);
+    expect(await listNotifications(owner.id, familyId)).toHaveLength(1);
+  });
+
+  it('truncates a long message into a preview and collapses whitespace', async () => {
+    await sendMessage(member.id, familyId, `line one\n\n   line   two ${'x'.repeat(200)}`);
+
+    const [notification] = await listNotifications(owner.id, familyId);
+
+    expect(notification?.message.length).toBeLessThanOrEqual(120);
+    expect(notification?.message).toContain('line one line two');
+    expect(notification?.message.endsWith('…')).toBe(true);
+  });
+
+  it('carries the family and message ids so a tap can open the thread', async () => {
+    const sent = await sendMessage(member.id, familyId, 'open me');
+    const [notification] = await listNotifications(owner.id, familyId);
+
+    expect(notification?.data).toMatchObject({
+      familyId,
+      messageId: String(sent.id),
+      actorId: member.id,
+    });
+  });
+})

@@ -54,6 +54,17 @@ export interface NotifyInput {
   recipientIds?: string[];
   /** Usually the person who caused the event — they don't need telling. */
   exclude?: string;
+  /**
+   * Groups push notifications that replace one another in the tray. Chat uses
+   * it so a busy thread leaves one entry rather than twenty.
+   */
+  pushTag?: string;
+  /**
+   * Record the notification but do not push it to these members. Chat uses it
+   * for people already reading the thread, who do not need their own phone
+   * buzzing at them.
+   */
+  skipPushFor?: string[];
 }
 
 /**
@@ -103,23 +114,31 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
 
     await publishEvent(input.familyId, 'notification');
 
-    if (recipients.length > 0) {
+    /*
+     * The in-app notification is recorded for everyone; the push is not.
+     * Somebody with the thread open in front of them has already been told.
+     */
+    const skip = new Set(input.skipPushFor ?? []);
+    const pushTo = recipients.filter((id) => !skip.has(id));
+
+    if (pushTo.length > 0) {
       const subs = await db
         .select({ token: pushSubscriptions.token })
         .from(pushSubscriptions)
-        .where(inArray(pushSubscriptions.userId, recipients));
-      
+        .where(inArray(pushSubscriptions.userId, pushTo));
+
       // Push notifications are fired in the background
       Promise.allSettled(
-        subs.map(sub => 
+        subs.map((sub) =>
           sendPushNotification(
-            sub.token, 
-            input.title, 
-            input.message, 
-            input.data ? (input.data as Record<string, string>) : undefined
-          )
-        )
-      ).catch(err => console.error('[notifications] FCM push failed', err));
+            sub.token,
+            input.title,
+            input.message,
+            input.data ? (input.data as Record<string, string>) : undefined,
+            input.pushTag,
+          ),
+        ),
+      ).catch((err) => console.error('[notifications] FCM push failed', err));
     }
   } catch (error) {
     console.error('[notifications] delivery failed', error);

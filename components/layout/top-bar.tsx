@@ -4,8 +4,10 @@ import Link from 'next/link';
 import * as React from 'react';
 import { ChevronDown, LogOut, Settings, User as UserIcon } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
+import { FamilySwitcher } from '@/components/family/family-switcher';
 import { Logo } from './logo';
 import { cn } from '@/lib/utils';
+import type { FamilySummary } from '@/lib/families/queries';
 
 export interface TopBarUser {
   id: string;
@@ -17,17 +19,26 @@ export interface TopBarUser {
 /**
  * App header. On mobile it carries the FamLink mark; on desktop the mark lives
  * in the sidebar and this bar is given over to the page title and account menu.
+ *
+ * It also carries the family switcher on mobile. That control used to live
+ * only in the sidebar, which is `hidden md:flex` — so on a phone there was no
+ * way to change family at all, and joining a second one left you stranded in
+ * whichever the server picked.
  */
 export function TopBar({
   user,
   title,
   onSignOut,
   right,
+  family,
+  families = [],
 }: {
   user: TopBarUser;
   title?: string | undefined;
   onSignOut: () => void;
   right?: React.ReactNode;
+  family?: FamilySummary | undefined;
+  families?: FamilySummary[];
 }) {
   const [open, setOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
@@ -59,7 +70,22 @@ export function TopBar({
         </Link>
 
         {title && (
-          <h1 className="text-[17px] font-semibold tracking-tight text-fg truncate">{title}</h1>
+          <h1 className="text-[17px] font-semibold tracking-tight text-fg truncate shrink-0">
+            {title}
+          </h1>
+        )}
+
+        {/*
+          Mobile only — the sidebar owns this on desktop. Renders nothing at
+          all for the single-family case, so the common setup gains no clutter.
+        */}
+        {family && (
+          <FamilySwitcher
+            current={family}
+            families={families}
+            variant="compact"
+            className="md:hidden"
+          />
         )}
 
         <div className="flex-1" />

@@ -12,6 +12,7 @@ import {
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
+import { notifyFamily } from '@/lib/notifications/service';
 
 /**
  * Family chat.
@@ -26,6 +27,43 @@ import { publishEvent } from '@/lib/realtime/publish';
  */
 
 const MAX_MESSAGE_LENGTH = 2_000;
+
+/** How much of a message a notification shows. */
+const PREVIEW_LENGTH = 120;
+
+/**
+ * Someone who read the thread this recently is looking at it now.
+ *
+ * The chat view marks the thread read as messages arrive, so a very recent
+ * mark is the closest thing the server has to "this person is watching".
+ * Pushing to them would buzz a phone whose owner is already reading.
+ */
+const ACTIVE_READER_WINDOW_MS = 60_000;
+
+function preview(content: string): string {
+  const collapsed = content.replace(/\s+/g, ' ').trim();
+  return collapsed.length > PREVIEW_LENGTH
+    ? `${collapsed.slice(0, PREVIEW_LENGTH - 1)}…`
+    : collapsed;
+}
+
+/** Members whose phones should stay quiet because they are already reading. */
+async function activeReaders(familyId: string, exclude: string): Promise<string[]> {
+  const since = new Date(Date.now() - ACTIVE_READER_WINDOW_MS);
+
+  const rows = await db
+    .select({ userId: messageReads.userId })
+    .from(messageReads)
+    .where(
+      and(
+        eq(messageReads.familyId, familyId),
+        gt(messageReads.lastReadAt, since),
+        ne(messageReads.userId, exclude),
+      ),
+    );
+
+  return rows.map((r) => r.userId);
+}
 const DEFAULT_PAGE_SIZE = 50;
 
 export interface MessageView {
@@ -156,10 +194,33 @@ export async function sendMessage(
 
   await publishEvent(familyId, 'message');
 
+  const senderName = sender?.name ?? 'Someone';
+
+  /*
+   * Tell the rest of the family. Until this existed, chat published only the
+   * in-app realtime hint above, so a message reached you solely if the app
+   * happened to be open — and on a phone there was no badge either.
+   *
+   * notifyFamily never throws into this path, so a failed push cannot lose a
+   * message that is already committed.
+   */
+  await notifyFamily({
+    familyId,
+    type: 'NEW_MESSAGE',
+    title: senderName,
+    message: preview(trimmed),
+    data: { familyId, messageId: String(inserted.id), actorId: senderId },
+    exclude: senderId,
+    // One tray entry per family thread: a new message replaces the last
+    // rather than stacking twenty deep.
+    pushTag: `chat:${familyId}`,
+    skipPushFor: await activeReaders(familyId, senderId),
+  });
+
   return {
     id: inserted.id,
     senderId,
-    senderName: sender?.name ?? 'Someone',
+    senderName,
     senderImage: sender?.image ?? null,
     content: inserted.content,
     deleted: false,

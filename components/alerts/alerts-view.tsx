@@ -9,6 +9,7 @@ import {
   LogOut,
   MapPin,
   MapPinOff,
+  MessageCircle,
   TriangleAlert,
   UserPlus,
 } from 'lucide-react';
@@ -47,6 +48,7 @@ const ICONS: Record<NotificationType, React.ElementType> = {
   LOCATION_ENABLED: MapPin,
   LOCATION_DISABLED: MapPinOff,
   FAMILY_INVITE: UserPlus,
+  NEW_MESSAGE: MessageCircle,
   SOS: TriangleAlert,
 };
 

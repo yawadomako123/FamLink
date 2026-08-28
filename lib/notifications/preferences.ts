@@ -103,6 +103,7 @@ const GOVERNED_BY: Partial<Record<NotificationType, keyof PreferencesView>> = {
   LEFT_PLACE: 'departures',
   LOCATION_ENABLED: 'sharingChanges',
   LOCATION_DISABLED: 'sharingChanges',
+  NEW_MESSAGE: 'chatMessages',
   // SOS and FAMILY_INVITE are deliberately absent — neither is optional.
 };
 

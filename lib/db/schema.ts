@@ -60,6 +60,15 @@ export const notificationType = pgEnum('notification_type', [
   'ARRIVED_PLACE',
   'LEFT_PLACE',
   'FAMILY_INVITE',
+  /**
+   * A chat message.
+   *
+   * `notification_preferences.chat_messages` has existed since the settings
+   * screen was built, defaulting to on, governing a notification that was
+   * never sent — chat only ever published an in-app realtime hint. Somebody
+   * with the app closed had no way to learn a message had arrived.
+   */
+  'NEW_MESSAGE',
   'SOS',
 ]);
 

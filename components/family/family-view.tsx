@@ -3,15 +3,20 @@
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  ArrowLeftRight,
+  Check,
   Crown,
+  Loader2,
   LogOut,
   MoreVertical,
   Pencil,
+  Plus,
   ShieldCheck,
   Ticket,
   Trash2,
   UserPlus,
 } from 'lucide-react';
+import Link from 'next/link';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,6 +25,7 @@ import { Alert, EmptyState } from '@/components/ui/feedback';
 import { StatusDot } from '@/components/ui/status-dot';
 import { Input } from '@/components/ui/input';
 import { InviteDialog } from './invite-dialog';
+import { useFamilySwitch } from './family-switcher';
 import { AskCheckInButton } from '@/components/checkins/check-in-panel';
 import { api, errorMessage } from '@/lib/api/client';
 import { timeAgo } from '@/lib/time';
@@ -42,6 +48,7 @@ const ROLE_PHRASE: Record<FamilyRole, string> = {
 
 export function FamilyView({
   family,
+  families,
   members,
   invitations,
   viewerId,
@@ -222,6 +229,9 @@ export function FamilyView({
       )}
 
       {/* ---------------------------------------------------------------- */}
+      <YourFamilies families={families} currentId={family.id} />
+
+      {/* ---------------------------------------------------------------- */}
       <Card>
         <CardContent className="pt-5">
           <div className="flex items-start justify-between gap-3">
@@ -297,6 +307,93 @@ export function FamilyView({
         }}
       />
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every family this person belongs to, and a way into each.
+ *
+ * The page has always been handed this list and never rendered it, which left
+ * the sidebar as the only route to a second family — and the sidebar does not
+ * exist on a phone. Hidden entirely for the single-family case rather than
+ * shown as a list of one.
+ */
+function YourFamilies({
+  families,
+  currentId,
+}: {
+  families: FamilySummary[];
+  currentId: string;
+}) {
+  const { switchTo, switchingTo, error } = useFamilySwitch();
+
+  if (families.length <= 1) return null;
+
+  return (
+    <Card>
+      <CardHeader className="flex items-center justify-between gap-3">
+        <CardTitle>Your families</CardTitle>
+        <Link href="/family/new">
+          <Button size="sm" variant="ghost" className="shrink-0">
+            <Plus aria-hidden className="size-3.5" />
+            <span className="hidden sm:inline">Create or join</span>
+          </Button>
+        </Link>
+      </CardHeader>
+
+      {error && (
+        <p role="alert" className="px-5 pb-2 text-xs text-danger-600">
+          {error}
+        </p>
+      )}
+
+      <ul className="divide-y divide-line border-t border-line">
+        {families.map((item) => {
+          const isCurrent = item.id === currentId;
+          const isSwitching = switchingTo === item.id;
+
+          return (
+            <li key={item.id} className="flex items-center gap-2 px-5 py-3">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <p className="text-sm font-medium text-fg truncate">{item.name}</p>
+                  {isCurrent && (
+                    <span className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-tint-brand text-on-tint-brand">
+                      <Check aria-hidden className="size-3" />
+                      Viewing
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-muted mt-0.5 truncate">
+                  {item.memberCount} {item.memberCount === 1 ? 'member' : 'members'} ·{' '}
+                  {ROLE_LABEL[item.role]}
+                </p>
+              </div>
+
+              {!isCurrent && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="shrink-0 px-2 sm:px-3"
+                  disabled={switchingTo !== null}
+                  onClick={() => void switchTo(item.id)}
+                  aria-label={`Switch to ${item.name}`}
+                >
+                  {isSwitching ? (
+                    <Loader2 aria-hidden className="size-3.5 animate-spin" />
+                  ) : (
+                    <ArrowLeftRight aria-hidden className="size-3.5" />
+                  )}
+                  <span className="hidden sm:inline">Switch</span>
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }
 
