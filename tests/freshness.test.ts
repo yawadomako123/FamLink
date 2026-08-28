@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  callDuration,
+  formatDuration,
   isStale,
   locationFreshness,
   timeAgo,
@@ -66,5 +68,56 @@ describe('timeAgo', () => {
 
   it('treats a future timestamp as the present', () => {
     expect(timeAgo(new Date(NOW + 10_000), NOW)).toBe('just now');
+  });
+});
+
+describe('formatDuration', () => {
+  it('uses seconds below a minute', () => {
+    expect(formatDuration(0)).toBe('0s');
+    expect(formatDuration(45_000)).toBe('45s');
+    expect(formatDuration(59_400)).toBe('59s');
+  });
+
+  it('zero-pads seconds once minutes appear, the way a call log does', () => {
+    expect(formatDuration(60_000)).toBe('1:00');
+    expect(formatDuration(127_000)).toBe('2:07');
+    expect(formatDuration(59 * 60_000 + 59_000)).toBe('59:59');
+  });
+
+  it('adds an hours field only when there are hours', () => {
+    expect(formatDuration(3_600_000)).toBe('1:00:00');
+    expect(formatDuration(4_470_000)).toBe('1:14:30');
+  });
+
+  it('never renders a negative length', () => {
+    expect(formatDuration(-5_000)).toBe('0s');
+  });
+});
+
+describe('callDuration', () => {
+  const answered = new Date('2026-08-27T12:00:00Z');
+
+  it('measures from the answer, not from the first ring', () => {
+    expect(callDuration(answered, new Date('2026-08-27T12:02:07Z'))).toBe('2:07');
+  });
+
+  /*
+   * The important case: a call nobody picked up is not a zero-second
+   * conversation, and must not be presented as one.
+   */
+  it('reports no duration for a call that was never answered', () => {
+    expect(callDuration(null, new Date('2026-08-27T12:00:40Z'))).toBeNull();
+  });
+
+  it('reports no duration for a call still in progress', () => {
+    expect(callDuration(answered, null)).toBeNull();
+  });
+
+  it('refuses a negative span rather than rendering nonsense', () => {
+    expect(callDuration(answered, new Date('2026-08-27T11:59:00Z'))).toBeNull();
+  });
+
+  it('accepts the ISO strings the client boundary hands it', () => {
+    expect(callDuration('2026-08-27T12:00:00Z', '2026-08-27T12:00:30Z')).toBe('30s');
   });
 });

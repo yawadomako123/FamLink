@@ -57,6 +57,47 @@ export function locationFreshness(
   return { label: `Last seen ${timeAgo(at, now)}`, state: 'stale' };
 }
 
+/**
+ * "45s", "2:07", "1:14:30" — a call's length.
+ *
+ * Seconds below a minute because "0:45" reads like three quarters of an hour
+ * at a glance, and zero-padded minutes above it because that is how every
+ * phone's call log has always shown them.
+ */
+export function formatDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+
+  if (total < 60) return `${total}s`;
+
+  const seconds = total % 60;
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  return hours > 0
+    ? `${hours}:${pad(minutes)}:${pad(seconds)}`
+    : `${minutes}:${pad(seconds)}`;
+}
+
+/**
+ * How long a call lasted, or null when it never became one.
+ *
+ * A missed or declined call has no answer time, and inventing a duration from
+ * how long it rang would misrepresent it as a conversation that happened.
+ */
+export function callDuration(
+  answeredAt: Date | string | null | undefined,
+  endedAt: Date | string | null | undefined,
+): string | null {
+  if (!answeredAt || !endedAt) return null;
+
+  const ms = new Date(endedAt).getTime() - new Date(answeredAt).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+
+  return formatDuration(ms);
+}
+
 /** "9:42 AM" in the viewer's locale. */
 export function formatClock(at: Date | string | number): string {
   return new Date(at).toLocaleTimeString(undefined, {

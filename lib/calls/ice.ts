@@ -81,6 +81,25 @@ export function buildIceConfig(turn?: {
  */
 export const MAX_CALL_PARTICIPANTS = 4;
 
+/**
+ * Camera constraints, optionally pinned to one device.
+ *
+ * Shared with the camera switcher, which re-opens the camera by `deviceId`
+ * rather than by `facingMode`: a phone reports front and rear cameras, but a
+ * laptop with two webcams reports neither, and cycling device ids is the only
+ * approach that works on both.
+ */
+export function videoConstraints(deviceId?: string): MediaTrackConstraints {
+  return {
+    // A modest target: family calls are usually on mobile data, and a
+    // reliable 640x480 beats a stuttering 1080p.
+    width: { ideal: 1280, max: 1920 },
+    height: { ideal: 720, max: 1080 },
+    frameRate: { ideal: 24, max: 30 },
+    ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' }),
+  };
+}
+
 /** Constraints per call kind. Audio is always requested; video only for video. */
 export function mediaConstraints(kind: 'audio' | 'video'): MediaStreamConstraints {
   return {
@@ -89,17 +108,22 @@ export function mediaConstraints(kind: 'audio' | 'video'): MediaStreamConstraint
       noiseSuppression: true,
       autoGainControl: true,
     },
-    video:
-      kind === 'video'
-        ? {
-            // A modest target: family calls are usually on mobile data, and a
-            // reliable 640x480 beats a stuttering 1080p.
-            width: { ideal: 1280, max: 1920 },
-            height: { ideal: 720, max: 1080 },
-            frameRate: { ideal: 24, max: 30 },
-            facingMode: 'user',
-          }
-        : false,
+    video: kind === 'video' ? videoConstraints() : false,
+  };
+}
+
+/**
+ * Screen-share constraints.
+ *
+ * A shared screen is mostly static text, so frame rate is traded for
+ * legibility — a blurry shared screen is useless in a way a blurry face is not.
+ */
+export function displayConstraints(): DisplayMediaStreamOptions {
+  return {
+    video: { frameRate: { ideal: 15, max: 30 } },
+    // Tab audio would be mixed with the caller's microphone by most browsers
+    // and there is no UI to balance them, so it is not requested.
+    audio: false,
   };
 }
 

@@ -49,6 +49,13 @@ export function useRingtone(type: RingtoneType, active: boolean) {
     // Muted by default
     gainNode.gain.value = 0;
 
+    /*
+     * Mobile browsers hand back a suspended context when there has been no
+     * user gesture — which is exactly the case for an incoming call. Without
+     * this the phone rings silently.
+     */
+    void ctx.resume().catch(() => {});
+
     osc1.start();
     osc2.start();
 

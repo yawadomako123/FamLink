@@ -462,6 +462,12 @@ export async function listRecentCalls(userId: string, familyId: string, limit = 
       initiatorId: calls.initiatorId,
       initiatorName: users.name,
       startedAt: calls.startedAt,
+      /*
+       * Talk time is measured from the answer, not from the ring. A call that
+       * rang for forty seconds and lasted two minutes is a two-minute call;
+       * counting the ringing would quietly inflate every entry.
+       */
+      answeredAt: calls.answeredAt,
       endedAt: calls.endedAt,
     })
     .from(calls)

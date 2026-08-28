@@ -195,10 +195,10 @@ export function MapView({
                     size="md"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-fg whitespace-normal leading-tight">{person.name}</p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
+                    <p className="text-sm font-medium text-fg truncate">{person.name}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
                       <StatusDot status={entry.reason === 'paused' ? 'paused' : 'offline'} />
-                      <span className="text-xs text-muted">{WITHHELD_COPY[entry.reason]}</span>
+                      <span className="text-xs text-muted truncate">{WITHHELD_COPY[entry.reason]}</span>
                     </div>
                   </div>
                 </li>
@@ -250,10 +250,10 @@ function MemberRow({
         <Avatar name={location.name} userId={location.userId} image={location.image} size="md" />
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-fg whitespace-normal leading-tight">{location.name}</p>
-          <div className="flex items-center gap-1.5 mt-0.5">
+          <p className="text-sm font-medium text-fg truncate">{location.name}</p>
+          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
             <StatusDot status={status} />
-            <span className="text-xs text-muted">
+            <span className="text-xs text-muted truncate">
               {/*
                 A place name reads better than coordinates, but it must not
                 imply currency the fix does not have, so freshness still

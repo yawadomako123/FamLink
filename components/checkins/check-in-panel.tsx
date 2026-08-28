@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert } from '@/components/ui/feedback';
 import { api, errorMessage } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/time';
 
 export interface PendingCheckIn {
@@ -203,7 +204,9 @@ export function AskCheckInButton({
   }
 
   if (sent) {
-    return <span className="text-xs text-on-tint-brand font-medium">Asked</span>;
+    return (
+      <span className="text-xs text-on-tint-brand font-medium whitespace-nowrap">Asked</span>
+    );
   }
 
   return (
@@ -214,14 +217,26 @@ export function AskCheckInButton({
         loading={busy}
         onClick={() => void ask()}
         aria-label={`Ask ${targetName} if they're OK`}
+        title={error ?? undefined}
+        // Icon-only on a phone. In a member row this button competes with the
+        // name, the sharing status and a menu for about 280px, and the label is
+        // the first thing that can go without losing meaning.
+        className={cn('px-2 sm:px-3', error && 'text-danger-600')}
       >
         <UserCheck aria-hidden className="size-3.5" />
-        Check in
+        <span className="hidden sm:inline">Check in</span>
       </Button>
+
       {error && (
-        <span role="alert" className="text-xs text-danger-600">
-          {error}
-        </span>
+        <>
+          {/* Announced everywhere; only spelled out where there is room for it. */}
+          <span role="alert" className="sr-only">
+            {error}
+          </span>
+          <span aria-hidden className="hidden sm:inline text-xs text-danger-600">
+            {error}
+          </span>
+        </>
       )}
     </>
   );

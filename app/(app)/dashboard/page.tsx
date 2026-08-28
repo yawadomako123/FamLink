@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/feedback';
 import { DashboardMapCard } from '@/components/map/dashboard-map-card';
+import { RecentCalls } from '@/components/calls/recent-calls';
 import { StatusDot, type PresenceStatus } from '@/components/ui/status-dot';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { listFamilyMembers } from '@/lib/families/queries';
+import { listRecentCalls } from '@/lib/calls/service';
 import { locationFreshness } from '@/lib/time';
 
 export const metadata: Metadata = { title: 'Home' };
@@ -46,7 +48,12 @@ export default async function DashboardPage() {
     );
   }
 
-  const members = await listFamilyMembers(session.user.id, current.id);
+  const [members, recentCalls] = await Promise.all([
+    listFamilyMembers(session.user.id, current.id),
+    // A short list: the dashboard is a glance, not a log.
+    listRecentCalls(session.user.id, current.id, 5),
+  ]);
+
   const others = members.filter((m) => m.userId !== session.user.id);
 
   return (
@@ -138,6 +145,22 @@ export default async function DashboardPage() {
             })}
           </ul>
         </Card>
+
+        {/* Dates are serialised for the client boundary, which renders them
+            as relative times and call lengths. */}
+        <RecentCalls
+          viewerId={session.user.id}
+          calls={recentCalls.map((call) => ({
+            id: call.id,
+            kind: call.kind,
+            status: call.status,
+            initiatorId: call.initiatorId,
+            initiatorName: call.initiatorName,
+            startedAt: call.startedAt.toISOString(),
+            answeredAt: call.answeredAt?.toISOString() ?? null,
+            endedAt: call.endedAt?.toISOString() ?? null,
+          }))}
+        />
 
         <div className="grid grid-cols-2 gap-3">
           <Link href="/chat">

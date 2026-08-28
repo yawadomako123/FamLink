@@ -49,7 +49,14 @@ export function CallManager({
         `/api/v1/families/${familyId}/calls`,
       );
 
-      setIce(result.ice);
+      /*
+       * Identity is preserved when the servers have not actually changed. This
+       * object is a dependency all the way down into the peer connections, and
+       * a fresh one every poll churned them for nothing.
+       */
+      setIce((prev) =>
+        prev && JSON.stringify(prev) === JSON.stringify(result.ice) ? prev : result.ice,
+      );
       setCall(result.active);
 
       // The call ended elsewhere — drop out of the stage.
@@ -110,12 +117,19 @@ export function CallManager({
   );
 
   const isRinging = call?.status === 'ringing';
-  useRingtone('incoming', isRinging);
+
+  /*
+   * The person who placed the call is a participant from the moment it exists,
+   * and the stage already plays them a ringback. Ringing at them as well
+   * layered an incoming tone over an outgoing one.
+   */
+  const isParticipating =
+    call !== null &&
+    (joined || call.participants.some((p) => p.userId === selfId && p.joined));
+
+  useRingtone('incoming', isRinging && !isParticipating);
 
   if (!call || !ice) return null;
-
-  const isParticipating =
-    joined || call.participants.some((p) => p.userId === selfId && p.joined);
 
   // In the call: show the stage.
   if (isParticipating) {
@@ -127,6 +141,7 @@ export function CallManager({
         selfId={selfId}
         selfName={selfName}
         participants={call.participants}
+        isInitiator={call.initiatorId === selfId}
         ice={ice}
         onEnded={() => {
           setJoined(false);

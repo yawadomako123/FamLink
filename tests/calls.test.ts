@@ -18,6 +18,7 @@ import {
   startCall,
 } from '@/lib/calls/service';
 import { buildIceConfig, MAX_CALL_PARTICIPANTS } from '@/lib/calls/ice';
+import { signalBodySchema } from '@/lib/calls/signals';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
 async function expectApiError(promise: Promise<unknown>, status: number) {
@@ -327,5 +328,54 @@ describe('ephemeral TURN credentials', () => {
 
     expect(credential).toBe(recomputed);
     expect(Number(username.split(':')[0])).toBeGreaterThan(Date.now() / 1000);
+  });
+});
+
+/**
+ * The signalling route's own validation.
+ *
+ * These sit apart from the `signalling` block above, which exercises
+ * `sendSignal` directly and would pass no matter what the route rejected. The
+ * mute bug lived exactly in that blind spot: the service accepted
+ * `media-state` happily, the route's schema did not list it, and every mute
+ * was refused with a 400 the client swallowed in a bare `catch`.
+ */
+describe('signal body validation', () => {
+  it('accepts every kind the client sends', () => {
+    for (const kind of ['offer', 'answer', 'ice', 'media-state'] as const) {
+      const result = signalBodySchema.safeParse({
+        toUserId: 'user-1',
+        kind,
+        payload: {},
+      });
+      expect(result.success, `${kind} must be accepted`).toBe(true);
+    }
+  });
+
+  it('carries mic, camera and screen flags through untouched', () => {
+    const result = signalBodySchema.safeParse({
+      toUserId: 'user-1',
+      kind: 'media-state',
+      payload: { camera: false, mic: false, screen: true },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.payload).toEqual({ camera: false, mic: false, screen: true });
+  });
+
+  it('still refuses a kind nothing sends', () => {
+    const result = signalBodySchema.safeParse({
+      toUserId: 'user-1',
+      kind: 'shutdown',
+      payload: {},
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it('allows a broadcast with no addressee', () => {
+    expect(
+      signalBodySchema.safeParse({ kind: 'ice', payload: { candidate: {} } }).success,
+    ).toBe(true);
   });
 });

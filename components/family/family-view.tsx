@@ -180,7 +180,7 @@ export function FamilyView({
           ) : (
             <ul className="divide-y divide-line border-t border-line">
               {invitations.map((invitation) => (
-                <li key={invitation.id} className="flex items-center gap-3 px-5 py-3">
+                <li key={invitation.id} className="flex items-center gap-2 px-5 py-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-fg">
                       {ROLE_LABEL[invitation.role]} invite
@@ -202,6 +202,7 @@ export function FamilyView({
                   <Button
                     size="sm"
                     variant="ghost"
+                    className="shrink-0"
                     disabled={busy}
                     onClick={() =>
                       void run(() =>
@@ -223,8 +224,8 @@ export function FamilyView({
       {/* ---------------------------------------------------------------- */}
       <Card>
         <CardContent className="pt-5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-sm font-medium text-fg">Leave this family</p>
               <p className="text-xs text-muted mt-1 leading-relaxed max-w-sm">
                 {isOwner && otherMembers.length > 0
@@ -237,6 +238,7 @@ export function FamilyView({
             <Button
               variant="danger"
               size="sm"
+              className="shrink-0"
               disabled={isOwner && otherMembers.length > 0}
               onClick={() => setLeaveOpen(true)}
             >
@@ -341,21 +343,47 @@ function MemberRow({
     viewerRole === 'admin' && !isSelf && member.role === 'member';
 
   return (
-    <li className="flex items-center gap-3 px-5 py-3.5">
+    /*
+     * The identity block owns the row's flexible width and everything else is
+     * shrink-0. On a 360px phone this row previously asked a name, a sharing
+     * status, a "Check in" label, a role pill and a menu to share about 280px,
+     * and the name wrapped to three lines to make room.
+     */
+    <li className="flex items-center gap-2 sm:gap-3 px-5 py-3">
       <Avatar name={member.name} userId={member.userId} image={member.image} size="md" />
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-fg whitespace-normal leading-tight">
-          {member.name}
-          {isSelf && <span className="text-muted font-normal"> (you)</span>}
-        </p>
-        <div className="flex items-center gap-1.5 mt-0.5">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-sm font-medium text-fg truncate">
+            {member.name}
+            {isSelf && <span className="text-muted font-normal"> (you)</span>}
+          </p>
+
+          {/* Beside the name, not competing with it. "Member" is the default
+              and says nothing, so it only appears where space is free. */}
+          <span
+            className={cn(
+              'shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded-md',
+              isOwnerRow
+                ? 'bg-tint-brand text-on-tint-brand'
+                : member.role === 'admin'
+                  ? 'bg-inset text-muted'
+                  : 'hidden sm:inline-flex text-subtle',
+            )}
+          >
+            {isOwnerRow && <Crown aria-hidden className="size-3" />}
+            {member.role === 'admin' && <ShieldCheck aria-hidden className="size-3" />}
+            {ROLE_LABEL[member.role]}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
           <StatusDot
             status={
               sharing === 'sharing' ? 'sharing' : sharing === 'paused' ? 'paused' : 'offline'
             }
           />
-          <span className="text-xs text-muted">
+          <span className="text-xs text-muted truncate">
             {sharing === 'sharing'
               ? 'Sharing location'
               : sharing === 'paused'
@@ -374,23 +402,8 @@ function MemberRow({
         />
       )}
 
-      <span
-        className={cn(
-          'inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md',
-          isOwnerRow
-            ? 'bg-tint-brand text-on-tint-brand'
-            : member.role === 'admin'
-              ? 'bg-inset text-muted'
-              : 'text-subtle',
-        )}
-      >
-        {isOwnerRow && <Crown aria-hidden className="size-3" />}
-        {member.role === 'admin' && <ShieldCheck aria-hidden className="size-3" />}
-        {ROLE_LABEL[member.role]}
-      </span>
-
       {(canAct || canRemoveOnly) && (
-        <div ref={menuRef} className="relative">
+        <div ref={menuRef} className="relative shrink-0">
           <button
             type="button"
             onClick={() => setMenuOpen((v) => !v)}
