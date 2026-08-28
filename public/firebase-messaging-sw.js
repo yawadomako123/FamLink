@@ -18,16 +18,28 @@ if (firebaseConfig.apiKey !== "REPLACE_WITH_YOUR_API_KEY") {
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
 
+  /*
+   * The single author of anything the user sees.
+   *
+   * Pushes are sent data-only on purpose: a message carrying a `notification`
+   * block is auto-displayed by the SDK *and* delivered here, so drawing one
+   * here as well produced two notifications for every push. Title and body
+   * therefore arrive in `data`.
+   *
+   * `payload.notification` is still read as a fallback, so a push sent by an
+   * older deployment — or sitting queued from before it — is not silent.
+   */
   messaging.onBackgroundMessage((payload) => {
-    const notificationTitle = payload.notification?.title || 'FamLink';
+    const data = payload.data || {};
+    const notificationTitle = data.title || payload.notification?.title || 'FamLink';
     const notificationOptions = {
-      body: payload.notification?.body,
+      body: data.body || payload.notification?.body || '',
       icon: '/icon512_rounded.png',
-      data: payload.data,
+      data: data,
       // Chat sends one of these per message. Sharing a tag makes each replace
       // the last, so a busy thread leaves one entry rather than twenty.
-      tag: payload.data?.tag,
-      renotify: Boolean(payload.data?.tag)
+      tag: data.tag,
+      renotify: Boolean(data.tag)
     };
 
     self.registration.showNotification(notificationTitle, notificationOptions);

@@ -1,5 +1,6 @@
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
-import { getMessaging, Message } from 'firebase-admin/messaging';
+import { getMessaging } from 'firebase-admin/messaging';
+import { buildPushMessage } from './message';
 
 if (!getApps().length) {
   try {
@@ -23,14 +24,7 @@ export async function sendPushNotification(
   title: string,
   body: string,
   data?: Record<string, string>,
-  /**
-   * Groups notifications that supersede one another.
-   *
-   * A family group chat sends one of these per message, and a stack of eleven
-   * "Ama: ok" is how a person ends up turning notifications off. Sharing a tag
-   * makes each new one replace the last, so the tray holds the latest rather
-   * than the history.
-   */
+  /** Groups pushes that replace one another in the tray. See buildPushMessage. */
   tag?: string,
 ) {
   if (!adminMessaging) {
@@ -39,26 +33,7 @@ export async function sendPushNotification(
   }
 
   try {
-    const message: Message = {
-      token,
-      notification: {
-        title,
-        body,
-      },
-      /*
-       * The tag is repeated inside `data` on purpose. A service worker that
-       * handles onBackgroundMessage builds its own notification options, so
-       * the webpush tag below never reaches it — it has to read it from here.
-       */
-      data: tag ? { ...(data ?? {}), tag } : data,
-      ...(tag
-        ? {
-            android: { collapseKey: tag, notification: { tag } },
-            webpush: { notification: { tag, renotify: true } },
-          }
-        : {}),
-    };
-    await adminMessaging.send(message);
+    await adminMessaging.send(buildPushMessage({ token, title, body, data, tag }));
     return true;
   } catch (error) {
     console.error('Error sending push notification:', error);
