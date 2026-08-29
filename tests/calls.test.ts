@@ -17,7 +17,7 @@ import {
   sendSignal,
   startCall,
 } from '@/lib/calls/service';
-import { buildIceConfig, MAX_CALL_PARTICIPANTS } from '@/lib/calls/ice';
+import { buildIceConfig, MAX_CALL_PARTICIPANTS, videoConstraints } from '@/lib/calls/ice';
 import { signalBodySchema } from '@/lib/calls/signals';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
@@ -469,5 +469,53 @@ describe('direct calls', () => {
 
   it('refuses a non-member starting one', async () => {
     await expectApiError(startCall(outsider.id, familyId, 'audio', [member.id]), 404);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Camera constraints.
+ *
+ * The flip button used to walk `enumerateDevices()` one entry at a time. That
+ * is right on a laptop with two webcams and wrong on a phone: iOS reports the
+ * back wide, ultra-wide and telephoto lenses as separate video inputs, so
+ * getting back to the front camera took four or five taps.
+ */
+describe('camera constraints', () => {
+  it('asks for a facing mode exactly, so a phone cannot ignore it', () => {
+    const back = videoConstraints({ facingMode: 'environment' });
+
+    expect(back.facingMode).toEqual({ exact: 'environment' });
+    expect(back.deviceId, 'a facing request must not pin a device').toBeUndefined();
+  });
+
+  it('pins the device when one is named, for hardware with no facing labels', () => {
+    const pinned = videoConstraints({ deviceId: 'cam-2' });
+
+    expect(pinned.deviceId).toEqual({ exact: 'cam-2' });
+    expect(pinned.facingMode).toBeUndefined();
+  });
+
+  it('prefers the device id when both are given', () => {
+    const both = videoConstraints({ deviceId: 'cam-2', facingMode: 'environment' });
+
+    expect(both.deviceId).toEqual({ exact: 'cam-2' });
+    expect(both.facingMode).toBeUndefined();
+  });
+
+  it('opens on the front camera by default', () => {
+    expect(videoConstraints().facingMode).toBe('user');
+  });
+
+  it('keeps the resolution ceiling whichever camera is chosen', () => {
+    for (const c of [
+      videoConstraints(),
+      videoConstraints({ facingMode: 'environment' }),
+      videoConstraints({ deviceId: 'cam-2' }),
+    ]) {
+      expect(c.width).toEqual({ ideal: 1280, max: 1920 });
+      expect(c.frameRate).toEqual({ ideal: 24, max: 30 });
+    }
   });
 });

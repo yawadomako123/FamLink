@@ -356,6 +356,32 @@ function RemoteTile({
     if (el) applyAudioOutput(el, outputDeviceId);
   }, [outputDeviceId]);
 
+  /*
+   * Start playing again on the way back into the app.
+   *
+   * iOS pauses media elements when the page stops being frontmost, and does
+   * not always resume them on return — the call was still connected but the
+   * other person stayed silent until something touched the element. Declaring
+   * the audio session keeps most of this from happening; this catches the rest.
+   */
+  React.useEffect(() => {
+    const resume = () => {
+      if (document.visibilityState !== 'visible') return;
+      const el = ref.current;
+      if (el?.paused) void el.play().catch(() => {});
+    };
+
+    document.addEventListener('visibilitychange', resume);
+    window.addEventListener('focus', resume);
+    window.addEventListener('pageshow', resume);
+
+    return () => {
+      document.removeEventListener('visibilitychange', resume);
+      window.removeEventListener('focus', resume);
+      window.removeEventListener('pageshow', resume);
+    };
+  }, []);
+
   // A shared screen arrives on the same track as a camera would, so the
   // sender's own word is what distinguishes them.
   const showing = remote.cameraEnabled || remote.screenSharing;
@@ -385,7 +411,21 @@ function RemoteTile({
 
       {!hasVideo && (
         <div className="absolute inset-0 grid place-items-center bg-sand-900">
-          <Avatar name={name} userId={remote.userId} size="xl" />
+          <div className="text-center">
+            <Avatar name={name} userId={remote.userId} size="xl" />
+
+            {/*
+              Says the call is still up.
+              
+              A tile that goes to a bare avatar the moment somebody turns their
+              camera off looks exactly like a call that has dropped, and on iOS
+              — where the camera light going out is the other visible change —
+              that is what it was being read as.
+            */}
+            <p className="mt-3 text-xs text-white/60">
+              {connecting ? 'Reconnecting…' : 'Camera off · still connected'}
+            </p>
+          </div>
         </div>
       )}
 

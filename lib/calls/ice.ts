@@ -89,15 +89,29 @@ export const MAX_CALL_PARTICIPANTS = 4;
  * laptop with two webcams reports neither, and cycling device ids is the only
  * approach that works on both.
  */
-export function videoConstraints(deviceId?: string): MediaTrackConstraints {
-  return {
+export function videoConstraints(
+  target?: { deviceId?: string; facingMode?: 'user' | 'environment' },
+): MediaTrackConstraints {
+  const base: MediaTrackConstraints = {
     // A modest target: family calls are usually on mobile data, and a
     // reliable 640x480 beats a stuttering 1080p.
     width: { ideal: 1280, max: 1920 },
     height: { ideal: 720, max: 1080 },
     frameRate: { ideal: 24, max: 30 },
-    ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' }),
   };
+
+  if (target?.deviceId) return { ...base, deviceId: { exact: target.deviceId } };
+
+  /*
+   * `exact` on facingMode, deliberately.
+   *
+   * An `ideal` facingMode is a suggestion a phone is free to ignore, which
+   * makes "switch to the back camera" silently do nothing. Exact either
+   * switches or throws, and the caller falls back to device ids when it does.
+   */
+  if (target?.facingMode) return { ...base, facingMode: { exact: target.facingMode } };
+
+  return { ...base, facingMode: 'user' };
 }
 
 /** Constraints per call kind. Audio is always requested; video only for video. */

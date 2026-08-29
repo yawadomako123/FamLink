@@ -9,6 +9,7 @@ import {
   videoConstraints,
   type IceConfig,
 } from '@/lib/calls/ice';
+import { claimAudioSession } from '@/lib/calls/audio-session';
 import type { SignalKind } from '@/lib/calls/signals';
 import type { CallKind } from '@/lib/db/schema';
 
@@ -129,6 +130,8 @@ export function useCall({
   const [screenStream, setScreenStream] = React.useState<MediaStream | null>(null);
   const [cameraCount, setCameraCount] = React.useState(0);
   const [facingMode, setFacingMode] = React.useState<'user' | 'environment'>('user');
+  // Read by the background-recovery effect, which must not re-run on a flip.
+  const facingModeRef = React.useRef<'user' | 'environment'>('user');
 
   const peersRef = React.useRef<Map<string, Peer>>(new Map());
   const localStreamRef = React.useRef<MediaStream | null>(null);
@@ -535,6 +538,19 @@ export function useCall({
    */
   const iceReady = ice !== null;
 
+  /*
+   * Tell iOS this page is a call before asking for the microphone.
+   *
+   * Without it, leaving the app silences the other person until you come back:
+   * Safari treats an ordinary media page as suspendable the moment it stops
+   * being frontmost. Released when the call ends, so the tab does not keep the
+   * microphone route claimed afterwards.
+   */
+  React.useEffect(() => {
+    if (!active || !callId) return;
+    return claimAudioSession('play-and-record');
+  }, [active, callId]);
+
   React.useEffect(() => {
     if (!active || !callId || !iceReady) return;
 
@@ -783,31 +799,55 @@ export function useCall({
   /* -------------------------------------------------------- camera switch -- */
 
   /**
-   * Moves to the next camera on the device.
+   * Flips between the front and back camera.
    *
-   * By device id rather than by `facingMode`: a phone reports front and rear,
-   * but a laptop with two webcams reports neither, and `{ facingMode: exact }`
-   * throws outright on hardware that does not label its cameras.
+   * A flip, not a cycle. This used to step through `enumerateDevices()` one
+   * entry at a time, which is fine on a laptop with two webcams and wrong on a
+   * phone: iOS reports the back wide, ultra-wide and telephoto lenses as
+   * separate video inputs, so returning to the front camera took four or five
+   * taps of a button labelled "switch camera".
+   *
+   * `facingMode: exact` asks for the other side directly and gets there in one.
+   * Hardware that does not label its cameras — most desktop webcams — throws on
+   * that constraint, so device-id cycling remains as the fallback.
    */
   const switchCamera = React.useCallback(async () => {
     const local = localStreamRef.current;
     const currentTrack = local?.getVideoTracks()[0];
     if (!local || !currentTrack) return;
 
+    const current = currentTrack.getSettings().facingMode;
+    const desired: 'user' | 'environment' =
+      current === 'environment' ? 'user' : 'environment';
+
     try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const cameras = devices.filter((d) => d.kind === 'videoinput');
-      if (cameras.length < 2) return;
+      let fresh: MediaStream | null = null;
 
-      const currentId = currentTrack.getSettings().deviceId;
-      const index = cameras.findIndex((c) => c.deviceId === currentId);
-      const next = cameras[(index + 1) % cameras.length];
-      if (!next) return;
+      try {
+        fresh = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints({ facingMode: desired }),
+          audio: false,
+        });
+      } catch {
+        /*
+         * No camera claims that facing. Fall back to walking the device list,
+         * which is the only thing that works on unlabelled hardware.
+         */
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((d) => d.kind === 'videoinput');
+        if (cameras.length < 2) return;
 
-      const fresh = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints(next.deviceId),
-        audio: false,
-      });
+        const currentId = currentTrack.getSettings().deviceId;
+        const index = cameras.findIndex((c) => c.deviceId === currentId);
+        const next = cameras[(index + 1) % cameras.length];
+        if (!next) return;
+
+        fresh = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints({ deviceId: next.deviceId }),
+          audio: false,
+        });
+      }
+
       const track = fresh.getVideoTracks()[0];
 
       if (!track) {
@@ -825,12 +865,75 @@ export function useCall({
       // Peers watching a shared screen must keep watching it.
       if (!screenStreamRef.current) replaceOutboundVideo(track);
 
-      setFacingMode(track.getSettings().facingMode === 'environment' ? 'environment' : 'user');
+      const settled = track.getSettings().facingMode === 'environment' ? 'environment' : 'user';
+      facingModeRef.current = settled;
+      setFacingMode(settled);
     } catch (err) {
       console.warn('[call] camera switch failed', err);
       flashError('Could not switch camera.');
     }
   }, [replaceOutboundVideo, flashError]);
+
+  /*
+   * Recovers capture that iOS ended while the app was in the background.
+   *
+   * Returning to a call could leave you connected and invisible: iOS is
+   * entitled to end a camera track once the page stops being frontmost, and an
+   * ended track never restarts on its own. The peer connections went on
+   * sending a track that had stopped producing frames, so the other side saw a
+   * frozen image and nothing ever corrected it.
+   *
+   * Only the camera is re-acquired. The microphone survives backgrounding once
+   * the audio session is declared, and asking for it again would interrupt
+   * audio that is working.
+   */
+  React.useEffect(() => {
+    if (!active || kind !== 'video') return;
+
+    const recover = async () => {
+      if (document.visibilityState !== 'visible') return;
+
+      const local = localStreamRef.current;
+      const existing = local?.getVideoTracks()[0];
+      if (!local || !existing || existing.readyState !== 'ended') return;
+
+      // A screen share owns the outbound video; leave it alone.
+      if (screenStreamRef.current) return;
+
+      try {
+        const fresh = await navigator.mediaDevices.getUserMedia({
+          video: videoConstraints({ facingMode: facingModeRef.current }),
+          audio: false,
+        });
+        const track = fresh.getVideoTracks()[0];
+
+        if (!track) {
+          fresh.getTracks().forEach((t) => t.stop());
+          return;
+        }
+
+        // A camera that was off before backgrounding stays off.
+        track.enabled = existing.enabled;
+
+        local.removeTrack(existing);
+        local.addTrack(track);
+        replaceOutboundVideo(track);
+      } catch (err) {
+        console.warn('[call] could not recover camera after backgrounding', err);
+      }
+    };
+
+    // One handler reference, so the listeners can actually be removed again.
+    const onWake = () => void recover();
+
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onWake);
+      window.removeEventListener('focus', onWake);
+    };
+  }, [active, kind, replaceOutboundVideo]);
 
   const screenSharing = screenStream !== null;
 
