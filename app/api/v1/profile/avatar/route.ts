@@ -1,4 +1,4 @@
-import { put } from '@vercel/blob';
+import { putPublic } from '@/lib/blob/store';
 import { eq } from 'drizzle-orm';
 import { authedRoute, ok } from '@/lib/api/handler';
 import { enforceRateLimit } from '@/lib/api/rate-limit';
@@ -41,8 +41,7 @@ export const POST = authedRoute(async (req, { session }) => {
     throw Errors.badRequest('Please upload a JPEG, PNG or WebP image.');
   }
 
-  const blob = await put(`avatars/${session.user.id}`, file, {
-    access: 'public',
+  const blob = await putPublic(`avatars/${session.user.id}`, file, {
     contentType: file.type,
     // The path is derived from the user id, so a new upload replaces the old.
     allowOverwrite: true,

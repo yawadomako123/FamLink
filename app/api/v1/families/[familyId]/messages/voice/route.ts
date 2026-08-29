@@ -1,4 +1,4 @@
-import { put } from '@vercel/blob';
+import { putPublic } from '@/lib/blob/store';
 import { authedRoute, ok } from '@/lib/api/handler';
 import { enforceRateLimit } from '@/lib/api/rate-limit';
 import { Errors } from '@/lib/api/errors';
@@ -63,8 +63,7 @@ export const POST = authedRoute<{ familyId: string }>(async (req, { params, sess
    * A random suffix, unlike avatars: every note is its own recording and must
    * never overwrite an earlier one still referenced by a message in the thread.
    */
-  const blob = await put(`voice/${familyId}/${session.user.id}`, file, {
-    access: 'public',
+  const blob = await putPublic(`voice/${familyId}/${session.user.id}`, file, {
     contentType: baseType,
     addRandomSuffix: true,
   });
