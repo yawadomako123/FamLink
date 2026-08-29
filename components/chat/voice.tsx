@@ -78,11 +78,18 @@ export function TypingIndicator({
  */
 export function VoiceRecorder({
   familyId,
+  enabled,
   disabled,
   onSent,
   onError,
 }: {
   familyId: string;
+  /**
+   * False when the deployment has no blob storage. The upload would be refused
+   * with "not configured", so the button is not offered at all — the same
+   * choice avatar uploads make.
+   */
+  enabled: boolean;
   disabled: boolean;
   onSent: () => void;
   onError: (message: string) => void;
@@ -192,7 +199,7 @@ export function VoiceRecorder({
     }
   }
 
-  if (!supported) return null;
+  if (!enabled || !supported) return null;
 
   if (recording) {
     return (

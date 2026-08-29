@@ -8,6 +8,7 @@ import { EmptyState } from '@/components/ui/feedback';
 import { ChatView } from '@/components/chat/chat-view';
 import { StartCallButtons } from '@/components/calls/call-manager';
 import { requireSession } from '@/lib/auth/session';
+import { isAvatarUploadEnabled } from '@/lib/env';
 import { resolveShellData } from '@/lib/families/shell';
 import { getReactions, listMessages } from '@/lib/chat/service';
 import { getMembership } from '@/lib/permissions/family';
@@ -70,6 +71,10 @@ export default async function ChatPage() {
         familyId={current.id}
         viewerId={session.user.id}
         canModerate={canModerate}
+        // Same gate as avatar uploads: without blob storage the recorder has
+        // nowhere to put the audio, so the control is hidden rather than
+        // offered and then refused.
+        voiceNotesEnabled={isAvatarUploadEnabled()}
         // The service returns newest-first for paging; the thread reads
         // oldest-first, so reverse once here rather than in the component.
         initialMessages={[...recent].reverse().map((m) => ({
@@ -78,6 +83,8 @@ export default async function ChatPage() {
           senderName: m.senderName,
           senderImage: m.senderImage,
           content: m.content,
+          audioUrl: m.audioUrl,
+          audioDurationMs: m.audioDurationMs,
           deleted: m.deleted,
           createdAt: m.createdAt.toISOString(),
           reactions: reactions.get(m.id) ?? [],

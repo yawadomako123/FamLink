@@ -317,12 +317,12 @@ export function StartCallButtons({
           'rounded-lg items-center justify-center text-muted transition-colors',
           'hover:text-fg hover:bg-raised disabled:opacity-50',
           /*
-           * In a member row on a phone this is the fourth control competing
-           * with the name, which was left about four characters wide. Voice is
-           * the one people reach for; video is a tap away in the chat header,
-           * and returns here as soon as there is room for it.
+           * Shown on a phone as well. It was hidden while "Check in" also sat
+           * in the row and the name was squeezed to about four characters;
+           * that button now lives in the row's menu, which buys back the width
+           * this needs.
            */
-          compact ? 'size-8 hidden sm:flex' : 'size-9 flex',
+          compact ? 'size-8 flex' : 'size-9 flex',
         )}
       >
         <Video aria-hidden className={compact ? 'size-4' : 'size-4.5'} />

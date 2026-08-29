@@ -56,11 +56,14 @@ export function ChatView({
   familyId,
   viewerId,
   canModerate,
+  voiceNotesEnabled,
   initialMessages,
 }: {
   familyId: string;
   viewerId: string;
   canModerate: boolean;
+  /** False when blob storage is not configured for this deployment. */
+  voiceNotesEnabled: boolean;
   initialMessages: ChatMessage[];
 }) {
   const [messages, setMessages] = React.useState<ChatMessage[]>(initialMessages);
@@ -453,6 +456,7 @@ export function ChatView({
           ) : (
             <VoiceRecorder
               familyId={familyId}
+              enabled={voiceNotesEnabled}
               disabled={sending}
               onSent={() => void appendNew()}
               onError={setError}

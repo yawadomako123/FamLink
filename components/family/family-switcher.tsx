@@ -135,7 +135,9 @@ export function FamilySwitcher({
         className={cn(
           'flex items-center text-left transition-colors',
           compact
-            ? 'min-w-0 max-w-40 gap-1 rounded-lg px-2 h-8 bg-raised hover:bg-inset'
+            // Narrow, and narrower still on a small phone: this chip shares a
+            // row with the page title and must yield to it.
+            ? 'min-w-0 max-w-28 sm:max-w-40 gap-1 rounded-lg px-2 h-8 bg-raised hover:bg-inset'
             : 'mt-0.5 w-full gap-1.5 rounded-lg -mx-1 px-1 py-0.5 hover:bg-raised',
         )}
       >

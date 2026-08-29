@@ -69,30 +69,38 @@ export function TopBar({
           <Logo showWordmark={false} />
         </Link>
 
-        {title && (
-          <h1 className="text-[17px] font-semibold tracking-tight text-fg truncate shrink-0">
-            {title}
-          </h1>
-        )}
-
         {/*
-          Mobile only — the sidebar owns this on desktop. Renders nothing at
-          all for the single-family case, so the common setup gains no clutter.
+          Title and family chip share one flexible column.
+          
+          Both were previously fixed-width siblings of a spacer, so a long page
+          title beside a long family name had nothing left to give and the row
+          pushed the account button off the edge. Here they compete for the same
+          space and both truncate.
         */}
-        {family && (
-          <FamilySwitcher
-            current={family}
-            families={families}
-            variant="compact"
-            className="md:hidden"
-          />
-        )}
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          {title && (
+            <h1 className="text-[17px] font-semibold tracking-tight text-fg truncate">
+              {title}
+            </h1>
+          )}
 
-        <div className="flex-1" />
+          {/*
+            Mobile only — the sidebar owns this on desktop. Renders nothing at
+            all for the single-family case, so the common setup gains no clutter.
+          */}
+          {family && (
+            <FamilySwitcher
+              current={family}
+              families={families}
+              variant="compact"
+              className="md:hidden min-w-0"
+            />
+          )}
+        </div>
 
-        {right}
+        <div className="shrink-0">{right}</div>
 
-        <div ref={menuRef} className="relative">
+        <div ref={menuRef} className="relative shrink-0">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}

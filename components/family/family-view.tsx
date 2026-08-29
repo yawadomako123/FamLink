@@ -15,6 +15,7 @@ import {
   ShieldCheck,
   Ticket,
   Trash2,
+  UserCheck,
   UserPlus,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -27,7 +28,6 @@ import { StatusDot } from '@/components/ui/status-dot';
 import { Input } from '@/components/ui/input';
 import { InviteDialog } from './invite-dialog';
 import { useFamilySwitch } from './family-switcher';
-import { AskCheckInButton } from '@/components/checkins/check-in-panel';
 import { StartCallButtons } from '@/components/calls/call-manager';
 import { CallPicker } from '@/components/calls/call-picker';
 import { api, errorMessage } from '@/lib/api/client';
@@ -530,16 +530,13 @@ function MemberRow({
         />
       )}
 
-      {/* Asking somebody if they are OK needs no role or permission. */}
+      {/*
+        Every member row gets a menu now, because "Check in" lives in it and
+        that needs no role at all. It also buys the row back the width that
+        button was taking, which is what lets both call buttons stay on a
+        phone instead of video being dropped.
+      */}
       {!isSelf && (
-        <AskCheckInButton
-          familyId={familyId}
-          targetId={member.userId}
-          targetName={member.name}
-        />
-      )}
-
-      {(canAct || canRemoveOnly) && (
         <div ref={menuRef} className="relative shrink-0">
           <button
             type="button"
@@ -558,6 +555,16 @@ function MemberRow({
               role="menu"
               className="absolute right-0 top-full mt-1 w-52 bg-card border border-line rounded-xl shadow-lift overflow-hidden z-10 p-1"
             >
+              {/* Asking somebody if they are OK needs no role or permission. */}
+              <AskCheckInMenuItem
+                familyId={familyId}
+                targetId={member.userId}
+                targetName={member.name}
+                onDone={() => setMenuOpen(false)}
+              />
+
+              {(canAct || canRemoveOnly) && <div className="h-px bg-line my-1" />}
+
               {canAct && (
                 <>
                   <MenuItem
@@ -580,21 +587,90 @@ function MemberRow({
                   </MenuItem>
                 </>
               )}
-              <MenuItem
-                onSelect={() => {
-                  setMenuOpen(false);
-                  onRemove();
-                }}
-                icon={Trash2}
-                danger
-              >
-                Remove from family
-              </MenuItem>
+              {(canAct || canRemoveOnly) && (
+                <MenuItem
+                  onSelect={() => {
+                    setMenuOpen(false);
+                    onRemove();
+                  }}
+                  icon={Trash2}
+                  danger
+                >
+                  Remove from family
+                </MenuItem>
+              )}
             </div>
           )}
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * "Check in" as a menu entry.
+ *
+ * The same request the standalone button made, moved into the row's menu so
+ * the row itself has space for both call buttons. It reports its own outcome
+ * inline rather than closing on failure, because a check-in that silently did
+ * not send is worse than one that says so.
+ */
+function AskCheckInMenuItem({
+  familyId,
+  targetId,
+  targetName,
+  onDone,
+}: {
+  familyId: string;
+  targetId: string;
+  targetName: string;
+  onDone: () => void;
+}) {
+  const router = useRouter();
+  const [state, setState] = React.useState<'idle' | 'sending' | 'sent' | 'failed'>('idle');
+  const [error, setError] = React.useState<string | null>(null);
+
+  async function ask() {
+    setState('sending');
+    setError(null);
+
+    try {
+      await api.post(`/api/v1/families/${familyId}/check-ins`, { targetId });
+      setState('sent');
+      router.refresh();
+      // Left on screen briefly so the confirmation is actually seen.
+      setTimeout(onDone, 900);
+    } catch (err) {
+      setError(errorMessage(err));
+      setState('failed');
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        role="menuitem"
+        disabled={state === 'sending' || state === 'sent'}
+        onClick={() => void ask()}
+        className="w-full flex items-center gap-2.5 h-9 px-2.5 rounded-lg text-sm text-fg hover:bg-raised transition-colors disabled:opacity-60"
+      >
+        {state === 'sending' ? (
+          <Loader2 aria-hidden className="size-4 animate-spin" />
+        ) : state === 'sent' ? (
+          <Check aria-hidden className="size-4 text-on-tint-brand" />
+        ) : (
+          <UserCheck aria-hidden className="size-4" />
+        )}
+        {state === 'sent' ? 'Asked' : `Ask ${targetName.split(' ')[0]} if they're OK`}
+      </button>
+
+      {error && (
+        <p role="alert" className="px-2.5 py-1 text-xs text-danger-600">
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 
