@@ -6,6 +6,7 @@ import {
   callParticipants,
   callSignals,
   calls,
+  families,
   familyMembers,
   users,
   type Call,
@@ -53,6 +54,15 @@ export async function startCall(
   userId: string,
   familyId: string,
   kind: CallKind,
+  /**
+   * Who to ring. Omitted rings the whole family, which is what the call
+   * buttons in the chat and family headers do.
+   *
+   * Naming people instead makes the call private to them: participation is
+   * what makes a call visible, so a call nobody else is a participant of does
+   * not appear to the rest of the family at all.
+   */
+  inviteeIds?: string[],
 ): Promise<CallView> {
   await requireMembership(userId, familyId);
 
@@ -72,6 +82,31 @@ export async function startCall(
     throw Errors.conflict('There is nobody else in this family to call yet.');
   }
 
+  let participantIds = members.map((m) => m.userId);
+
+  if (inviteeIds) {
+    const invited = new Set(inviteeIds.filter((id) => id !== userId));
+
+    if (invited.size === 0) {
+      throw Errors.badRequest('Choose at least one person to call.');
+    }
+
+    // Everyone named must actually be in this family, or a call could be used
+    // to probe for user ids that are nothing to do with it.
+    const inFamily = new Set(members.map((m) => m.userId));
+    for (const id of invited) {
+      if (!inFamily.has(id)) throw Errors.notFound('That family member');
+    }
+
+    participantIds = [userId, ...invited];
+
+    if (participantIds.length > MAX_CALL_PARTICIPANTS) {
+      throw Errors.conflict(
+        `FamLink supports up to ${MAX_CALL_PARTICIPANTS} people on a call, including you.`,
+      );
+    }
+  }
+
   const call = await db.transaction(async (tx) => {
     const [created] = await tx
       .insert(calls)
@@ -81,11 +116,11 @@ export async function startCall(
     if (!created) throw Errors.internal();
 
     await tx.insert(callParticipants).values(
-      members.map((m) => ({
+      participantIds.map((id) => ({
         callId: created.id,
-        userId: m.userId,
+        userId: id,
         // The caller is already in; everyone else is being rung.
-        joinedAt: m.userId === userId ? new Date() : null,
+        joinedAt: id === userId ? new Date() : null,
       })),
     );
 
@@ -100,6 +135,9 @@ export async function startCall(
     title: `${name} is calling`,
     message: `${name} started a ${kind === 'video' ? 'video' : 'voice'} call.`,
     data: { callId: call.id, kind, actorId: userId },
+    // Only the people being rung. A direct call must not announce itself to
+    // the rest of the family.
+    recipientIds: participantIds.filter((id) => id !== userId),
     exclude: userId,
   });
 
@@ -123,6 +161,19 @@ export async function joinCall(
   if (call.status === 'ended' || call.status === 'declined') {
     throw Errors.conflict('That call has already ended.');
   }
+
+  /*
+   * Being in the family is not enough. A group call lists every member as a
+   * participant, so this is transparent there — but a call between two people
+   * cannot be joined by a third who happens to know the id.
+   */
+  const [invited] = await db
+    .select({ userId: callParticipants.userId })
+    .from(callParticipants)
+    .where(and(eq(callParticipants.callId, callId), eq(callParticipants.userId, userId)))
+    .limit(1);
+
+  if (!invited) throw Errors.notFound('That call');
 
   const joined = await db.$count(
     callParticipants,
@@ -300,6 +351,35 @@ export async function getCall(
 }
 
 /**
+ * Any call ringing for this member, in any family they belong to.
+ *
+ * The in-app ring is mounted against one family — whichever is on screen — so
+ * a call in another family produced a push notification and nothing else. By
+ * the time somebody noticed and switched family the 45-second ring had long
+ * since timed out. For an app whose point is reaching people quickly that is
+ * the wrong failure.
+ *
+ * Returns the family alongside the call so the caller can move there before
+ * answering.
+ */
+export async function findCallForUser(
+  userId: string,
+): Promise<{ familyId: string; familyName: string; call: CallView } | null> {
+  const memberships = await db
+    .select({ familyId: familyMembers.familyId, familyName: families.name })
+    .from(familyMembers)
+    .innerJoin(families, eq(families.id, familyMembers.familyId))
+    .where(eq(familyMembers.userId, userId));
+
+  for (const { familyId, familyName } of memberships) {
+    const call = await getActiveCall(userId, familyId);
+    if (call) return { familyId, familyName, call };
+  }
+
+  return null;
+}
+
+/**
  * The family's current call, if any.
  *
  * Also retires calls that have been ringing too long, so a caller who closed
@@ -311,17 +391,27 @@ export async function getActiveCall(
 ): Promise<CallView | null> {
   await requireMembership(userId, familyId);
 
+  /*
+   * Scoped to calls this member is a participant of.
+   *
+   * A group call adds every member, so everyone still sees it and can join
+   * late. A call started with named people adds only them, and that is the
+   * whole of what makes it private — nobody else is told it is happening.
+   */
   const [call] = await db
     .select()
     .from(calls)
+    .innerJoin(callParticipants, eq(callParticipants.callId, calls.id))
     .where(
       and(
         eq(calls.familyId, familyId),
+        eq(callParticipants.userId, userId),
         or(eq(calls.status, 'ringing'), eq(calls.status, 'active')),
       ),
     )
     .orderBy(desc(calls.startedAt))
-    .limit(1);
+    .limit(1)
+    .then((rows) => rows.map((r) => r.calls));
 
   if (!call) return null;
 

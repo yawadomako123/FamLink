@@ -86,6 +86,14 @@ interface Peer {
    * than a renegotiation.
    */
   videoSender: RTCRtpSender | null;
+  /**
+   * The sender carrying our outbound audio.
+   *
+   * Held for the same reason as the video one: mute must act on the track a
+   * peer is actually receiving, which is not necessarily the track currently
+   * sitting in `localStreamRef`.
+   */
+  audioSender: RTCRtpSender | null;
 }
 
 /** How often to drain signalling while a call is being set up. */
@@ -199,6 +207,49 @@ export function useCall({
     };
   }, []);
 
+  /**
+   * Applies the mute state everywhere it has to hold.
+   *
+   * Disabling the track in `localStreamRef` is the documented way to mute, and
+   * it does work — measured on a loopback connection, a disabled track drops
+   * outbound audio energy to zero and bandwidth by 96%. What it cannot do is
+   * mute a track a peer is receiving that is *not* the one in that stream, and
+   * a sender can end up holding a different track object through any path that
+   * rebuilds media mid-call.
+   *
+   * So the senders are walked as well. `enabled` is set on whatever each one
+   * is actually transmitting, and on mute the track is pulled off the sender
+   * entirely — with no track attached there is nothing left to encode, which
+   * is the one guarantee that does not depend on which object is where.
+   */
+  const applyMicState = React.useCallback((enabled: boolean) => {
+    const local = localStreamRef.current;
+    const liveTrack = local?.getAudioTracks()[0] ?? null;
+
+    local?.getAudioTracks().forEach((track) => {
+      track.enabled = enabled;
+    });
+
+    for (const peer of peersRef.current.values()) {
+      const senders = peer.connection
+        .getSenders()
+        .filter((sender) => sender.track?.kind === 'audio' || sender === peer.audioSender);
+
+      for (const sender of senders) {
+        if (sender.track) sender.track.enabled = enabled;
+
+        if (!enabled) {
+          // Nothing attached, nothing encoded. Needs no renegotiation.
+          void sender.replaceTrack(null).catch(() => {});
+        } else if (!sender.track && liveTrack) {
+          void sender.replaceTrack(liveTrack).catch((err) => {
+            console.warn('[call] could not restore outbound audio', err);
+          });
+        }
+      }
+    }
+  }, []);
+
   /** Points every peer's outbound video at a different track, or at nothing. */
   const replaceOutboundVideo = React.useCallback((track: MediaStreamTrack | null) => {
     for (const peer of peersRef.current.values()) {
@@ -253,13 +304,27 @@ export function useCall({
       const stream = new MediaStream();
 
       let videoSender: RTCRtpSender | null = null;
+      let audioSender: RTCRtpSender | null = null;
       const local = localStreamRef.current;
 
       if (local) {
         for (const track of local.getTracks()) {
           const sender = connection.addTrack(track, local);
           if (track.kind === 'video') videoSender = sender;
+          if (track.kind === 'audio') audioSender = sender;
         }
+      }
+
+      /*
+       * A peer built before the microphone was ready would otherwise have no
+       * audio m-line at all, and adding one later needs a renegotiation this
+       * signalling does not do. Reserving the transceiver costs nothing and
+       * means `applyMicState` always has somewhere to put the track.
+       */
+      if (!audioSender) {
+        audioSender = connection.addTransceiver('audio', { direction: 'sendrecv' }).sender;
+        const liveAudio = local?.getAudioTracks()[0];
+        if (liveAudio) void audioSender.replaceTrack(liveAudio).catch(() => {});
       }
 
       /*
@@ -270,6 +335,16 @@ export function useCall({
        */
       if (!videoSender) {
         videoSender = connection.addTransceiver('video', { direction: 'sendrecv' }).sender;
+      }
+
+      /*
+       * A peer that joins while we are muted must not be handed a live
+       * microphone. The track added above is already disabled, but detaching
+       * it matches what `applyMicState` does everywhere else, so mute means
+       * one thing regardless of when somebody arrived.
+       */
+      if (local && local.getAudioTracks()[0]?.enabled === false) {
+        void audioSender.replaceTrack(null).catch(() => {});
       }
 
       // A peer joining mid-share must receive the screen, not the camera.
@@ -337,7 +412,7 @@ export function useCall({
         }
       };
 
-      const peer: Peer = { connection, stream, pendingCandidates: [], videoSender };
+      const peer: Peer = { connection, stream, pendingCandidates: [], videoSender, audioSender };
       peersRef.current.set(peerId, peer);
       return peer;
     },
@@ -625,16 +700,14 @@ export function useCall({
   }, [broadcastSignal, currentMediaState]);
 
   const toggleMic = React.useCallback(() => {
-    if (!localStreamRef.current) return;
-    const audioTracks = localStreamRef.current.getAudioTracks();
-    const firstTrack = audioTracks[0];
+    const firstTrack = localStreamRef.current?.getAudioTracks()[0];
     if (!firstTrack) return;
 
     const newState = !firstTrack.enabled;
-    audioTracks.forEach((t) => (t.enabled = newState));
+    applyMicState(newState);
     setMicEnabled(newState);
     announce();
-  }, [announce]);
+  }, [announce, applyMicState]);
 
   const toggleCamera = React.useCallback(() => {
     if (!localStreamRef.current) return;

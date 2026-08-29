@@ -379,3 +379,95 @@ describe('signal body validation', () => {
     ).toBe(true);
   });
 });
+
+/* ========================================================================== */
+
+/**
+ * Calling named people rather than the whole family.
+ *
+ * Participation is the whole of the privacy model: a group call lists every
+ * member, so everybody sees it and can join late, while a call started with
+ * named people lists only them. Nobody else is told it is happening, and
+ * knowing the id is not enough to get in.
+ */
+describe('direct calls', () => {
+  let third: TestUser;
+
+  beforeEach(async () => {
+    third = await createUser('Esi Third');
+    const invite = await createInvitation(owner.id, familyId, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+    await acceptInvitation(third.id, invite.code);
+  });
+
+  it('rings only the person named', async () => {
+    const call = await startCall(owner.id, familyId, 'audio', [member.id]);
+
+    expect(call.participants.map((p) => p.userId).sort()).toEqual(
+      [owner.id, member.id].sort(),
+    );
+  });
+
+  it('hides the call from everyone else in the family', async () => {
+    await startCall(owner.id, familyId, 'audio', [member.id]);
+
+    expect(await getActiveCall(member.id, familyId)).not.toBeNull();
+    expect(
+      await getActiveCall(third.id, familyId),
+      'a third member must not see a call between two others',
+    ).toBeNull();
+  });
+
+  it('refuses to be joined by somebody who was not called', async () => {
+    const call = await startCall(owner.id, familyId, 'audio', [member.id]);
+
+    await expectApiError(joinCall(third.id, familyId, call.id), 404);
+  });
+
+  it('still lets the person who was called join', async () => {
+    const call = await startCall(owner.id, familyId, 'audio', [member.id]);
+    const joined = await joinCall(member.id, familyId, call.id);
+
+    expect(joined.participants.find((p) => p.userId === member.id)?.joined).toBe(true);
+  });
+
+  it('leaves a whole-family call visible to everyone, as before', async () => {
+    await startCall(owner.id, familyId, 'audio');
+
+    expect(await getActiveCall(member.id, familyId)).not.toBeNull();
+    expect(await getActiveCall(third.id, familyId)).not.toBeNull();
+  });
+
+  it('refuses a stranger to this family', async () => {
+    await expectApiError(startCall(owner.id, familyId, 'audio', [outsider.id]), 404);
+  });
+
+  it('refuses a call to nobody', async () => {
+    await expectApiError(startCall(owner.id, familyId, 'audio', []), 400);
+    await expectApiError(startCall(owner.id, familyId, 'audio', [owner.id]), 400);
+  });
+
+  it('refuses more people than a mesh can carry', async () => {
+    const extras: TestUser[] = [];
+    for (let i = 0; i < MAX_CALL_PARTICIPANTS; i += 1) {
+      const user = await createUser(`Extra ${i}`);
+      const invite = await createInvitation(owner.id, familyId, {
+        role: 'member',
+        expiresInHours: 24,
+      });
+      await acceptInvitation(user.id, invite.code);
+      extras.push(user);
+    }
+
+    await expectApiError(
+      startCall(owner.id, familyId, 'audio', extras.map((u) => u.id)),
+      409,
+    );
+  });
+
+  it('refuses a non-member starting one', async () => {
+    await expectApiError(startCall(outsider.id, familyId, 'audio', [member.id]), 404);
+  });
+});

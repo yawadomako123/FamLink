@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useRealtime } from '@/hooks/useRealtime';
 import { useRingtone } from '@/hooks/useRingtone';
 import { api, errorMessage } from '@/lib/api/client';
+import { cn } from '@/lib/utils';
 import type { IceConfig } from '@/lib/calls/ice';
 import type { CallKind } from '@/lib/db/schema';
 import { CallStage } from './call-stage';
@@ -42,12 +43,22 @@ export function CallManager({
   const [joined, setJoined] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /** Set when the ringing call belongs to a family other than the one on screen. */
+  const [elsewhere, setElsewhere] = React.useState<{ id: string; name: string } | null>(null);
 
   const refresh = React.useCallback(async () => {
     try {
-      const result = await api.get<{ active: ActiveCall | null; ice: IceConfig }>(
-        `/api/v1/families/${familyId}/calls`,
-      );
+      /*
+       * Asks across every family, not just the one being viewed. A call in
+       * another family used to produce a push notification and no in-app ring
+       * at all, and the 45-second timeout usually won that race.
+       */
+      const result = await api.get<{
+        active: ActiveCall | null;
+        familyId: string | null;
+        familyName: string | null;
+        ice: IceConfig;
+      }>('/api/v1/calls/active');
 
       /*
        * Identity is preserved when the servers have not actually changed. This
@@ -58,6 +69,11 @@ export function CallManager({
         prev && JSON.stringify(prev) === JSON.stringify(result.ice) ? prev : result.ice,
       );
       setCall(result.active);
+      setElsewhere(
+        result.active && result.familyId && result.familyId !== familyId
+          ? { id: result.familyId, name: result.familyName ?? 'another family' }
+          : null,
+      );
 
       // The call ended elsewhere — drop out of the stage.
       if (!result.active) setJoined(false);
@@ -100,9 +116,23 @@ export function CallManager({
       setError(null);
 
       try {
-        await api.post(`/api/v1/families/${familyId}/calls/${call.id}`, { action });
-        if (action === 'join') setJoined(true);
-        else {
+        // The call's own family, which is not necessarily the one on screen.
+        await api.post(`/api/v1/families/${call.familyId}/calls/${call.id}`, { action });
+
+        if (action === 'join') {
+          setJoined(true);
+
+          /*
+           * Answering a call in another family moves you there. Leaving the
+           * app pointed at a different family than the call would make chat,
+           * the map and the member list all describe the wrong household.
+           */
+          if (call.familyId !== familyId) {
+            await api
+              .post('/api/v1/families/current', { familyId: call.familyId })
+              .catch(() => {});
+          }
+        } else {
           setJoined(false);
           setCall(null);
         }
@@ -135,7 +165,7 @@ export function CallManager({
   if (isParticipating) {
     return (
       <CallStage
-        familyId={familyId}
+        familyId={call.familyId}
         callId={call.id}
         kind={call.kind}
         selfId={selfId}
@@ -175,6 +205,16 @@ export function CallManager({
                 ? `Incoming ${call.kind === 'video' ? 'video' : 'voice'} call`
                 : `${call.kind === 'video' ? 'Video' : 'Voice'} call in progress`}
             </p>
+
+            {/*
+              Named when it is not the family on screen, because answering
+              switches you across and that should not be a surprise.
+            */}
+            {elsewhere && (
+              <p className="text-xs text-muted mt-0.5 truncate">
+                in {elsewhere.name} · answering switches you there
+              </p>
+            )}
           </div>
         </div>
 
@@ -216,10 +256,19 @@ export function StartCallButtons({
   familyId,
   disabled,
   compact = false,
+  inviteeIds,
+  labelSuffix,
 }: {
   familyId: string;
   disabled?: boolean;
   compact?: boolean;
+  /**
+   * Who to ring. Omitted calls the whole family, which is what the chat and
+   * family headers do. Naming people keeps the call private to them.
+   */
+  inviteeIds?: string[];
+  /** Completes the button labels, e.g. "Start a voice call with Ama". */
+  labelSuffix?: string;
 }) {
   const [busy, setBusy] = React.useState<CallKind | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -229,7 +278,10 @@ export function StartCallButtons({
     setError(null);
 
     try {
-      await api.post(`/api/v1/families/${familyId}/calls`, { kind });
+      await api.post(`/api/v1/families/${familyId}/calls`, {
+        kind,
+        ...(inviteeIds ? { inviteeIds } : {}),
+      });
       // CallManager picks the call up from the realtime hint and takes over.
     } catch (err) {
       setError(errorMessage(err));
@@ -239,13 +291,18 @@ export function StartCallButtons({
   }
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className={cn('flex items-center', compact ? 'gap-0.5' : 'gap-1.5')}>
       <button
         type="button"
         onClick={() => void start('audio')}
         disabled={disabled || busy !== null}
-        aria-label="Start a voice call"
-        className="size-9 rounded-lg flex items-center justify-center text-muted hover:text-fg hover:bg-raised transition-colors disabled:opacity-50"
+        aria-label={labelSuffix ? `Call ${labelSuffix}` : 'Start a voice call'}
+        title={labelSuffix ? `Call ${labelSuffix}` : 'Start a voice call'}
+        className={cn(
+          'rounded-lg flex items-center justify-center text-muted transition-colors',
+          'hover:text-fg hover:bg-raised disabled:opacity-50',
+          compact ? 'size-8' : 'size-9',
+        )}
       >
         <Phone aria-hidden className={compact ? 'size-4' : 'size-4.5'} />
       </button>
@@ -254,8 +311,19 @@ export function StartCallButtons({
         type="button"
         onClick={() => void start('video')}
         disabled={disabled || busy !== null}
-        aria-label="Start a video call"
-        className="size-9 rounded-lg flex items-center justify-center text-muted hover:text-fg hover:bg-raised transition-colors disabled:opacity-50"
+        aria-label={labelSuffix ? `Video call ${labelSuffix}` : 'Start a video call'}
+        title={labelSuffix ? `Video call ${labelSuffix}` : 'Start a video call'}
+        className={cn(
+          'rounded-lg items-center justify-center text-muted transition-colors',
+          'hover:text-fg hover:bg-raised disabled:opacity-50',
+          /*
+           * In a member row on a phone this is the fourth control competing
+           * with the name, which was left about four characters wide. Voice is
+           * the one people reach for; video is a tap away in the chat header,
+           * and returns here as soon as there is room for it.
+           */
+          compact ? 'size-8 hidden sm:flex' : 'size-9 flex',
+        )}
       >
         <Video aria-hidden className={compact ? 'size-4' : 'size-4.5'} />
       </button>

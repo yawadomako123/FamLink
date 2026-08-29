@@ -11,6 +11,7 @@ import {
   revokeInvitation,
   transferOwnership,
   updateMemberRole,
+  MAX_FAMILIES_PER_USER,
 } from '@/lib/families/service';
 import { listFamilyInvitations, listFamilyMembers } from '@/lib/families/queries';
 import { getMembership } from '@/lib/permissions/family';
@@ -476,5 +477,40 @@ describe('cross-family isolation', () => {
     // Being an owner somewhere grants nothing anywhere else.
     await expectApiError(renameFamily(owner.id, familyB.id, 'Taken over'), 404);
     await expectApiError(removeMember(owner.id, familyB.id, outsider.id), 404);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * The ceiling on how many families one person may belong to.
+ *
+ * `createFamily` has always enforced it. `acceptInvitation` did not, so the
+ * limit could be walked past by being invited rather than creating — the
+ * easier of the two things to do.
+ */
+describe('family count ceiling', () => {
+  it('refuses an invitation once the caller is at the limit', async () => {
+    const joiner = await createUser('Serial Joiner');
+
+    // Fill the joiner up to the ceiling, invitation by invitation.
+    for (let i = 0; i < MAX_FAMILIES_PER_USER; i += 1) {
+      const host = await createUser(`Host ${i}`);
+      const family = await createFamily(host.id, `Family ${i}`);
+      const invite = await createInvitation(host.id, family.id, {
+        role: 'member',
+        expiresInHours: 24,
+      });
+      await acceptInvitation(joiner.id, invite.code);
+    }
+
+    const host = await createUser('One Too Many');
+    const family = await createFamily(host.id, 'The Last Straw');
+    const invite = await createInvitation(host.id, family.id, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+
+    await expectApiError(acceptInvitation(joiner.id, invite.code), 409);
   });
 });

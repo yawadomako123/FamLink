@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { InviteDialog } from './invite-dialog';
 import { useFamilySwitch } from './family-switcher';
 import { AskCheckInButton } from '@/components/checkins/check-in-panel';
+import { StartCallButtons } from '@/components/calls/call-manager';
 import { api, errorMessage } from '@/lib/api/client';
 import { timeAgo } from '@/lib/time';
 import { cn } from '@/lib/utils';
@@ -489,6 +490,19 @@ function MemberRow({
           </span>
         </div>
       </div>
+
+      {/*
+        Calling one person rather than the whole family. Needs no role: the
+        call is private to the two of you, and nobody else is told about it.
+      */}
+      {!isSelf && (
+        <StartCallButtons
+          familyId={familyId}
+          compact
+          inviteeIds={[member.userId]}
+          labelSuffix={member.name}
+        />
+      )}
 
       {/* Asking somebody if they are OK needs no role or permission. */}
       {!isSelf && (

@@ -29,7 +29,7 @@ import type { AssignableRole } from '@/lib/validation/family';
  */
 
 /** A user may not accumulate families without bound. */
-const MAX_FAMILIES_PER_USER = 10;
+export const MAX_FAMILIES_PER_USER = 10;
 const MAX_MEMBERS_PER_FAMILY = 25;
 const MAX_ACTIVE_INVITATIONS = 20;
 
@@ -385,6 +385,18 @@ export async function acceptInvitation(
       .limit(1);
 
     if (existing.length > 0) throw DomainErrors.alreadyMember();
+
+    /*
+     * The same ceiling `createFamily` applies. It was checked only there, so
+     * the limit could be walked straight past by being invited rather than
+     * creating — which is the easier of the two things to do.
+     */
+    const belongsTo = await tx.$count(familyMembers, eq(familyMembers.userId, userId));
+    if (belongsTo >= MAX_FAMILIES_PER_USER) {
+      throw Errors.conflict(
+        `You can belong to at most ${MAX_FAMILIES_PER_USER} families. Leave one before joining another.`,
+      );
+    }
 
     const memberCount = await tx.$count(
       familyMembers,
