@@ -512,8 +512,13 @@ export const messages = pgTable(
      * text row for the notification preview and for anyone who cannot play
      * audio, and the thread stays one ordered list of messages rather than two
      * interleaved kinds.
+     *
+     * A blob *pathname*, not a URL. The recordings live in a private store, so
+     * there is no address anyone could fetch directly — playback goes through
+     * an endpoint that checks family membership first. Storing a URL would
+     * imply a public one exists.
      */
-    audioUrl: text('audio_url'),
+    audioPath: text('audio_path'),
     audioDurationMs: integer('audio_duration_ms'),
     /** Soft delete, so a removed message leaves the thread order intact. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),

@@ -50,6 +50,20 @@
       "when": 1787968648385,
       "tag": "0006_same_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788010779326,
+      "tag": "0007_add_audio_path",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788010795161,
+      "tag": "0008_drop_audio_url",
+      "breakpoints": true
     }
   ]
 }

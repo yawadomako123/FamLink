@@ -1,4 +1,4 @@
-import { putPublic } from '@/lib/blob/store';
+import { putPrivate } from '@/lib/blob/store';
 import { eq } from 'drizzle-orm';
 import { authedRoute, ok } from '@/lib/api/handler';
 import { enforceRateLimit } from '@/lib/api/rate-limit';
@@ -41,17 +41,26 @@ export const POST = authedRoute(async (req, { session }) => {
     throw Errors.badRequest('Please upload a JPEG, PNG or WebP image.');
   }
 
-  const blob = await putPublic(`avatars/${session.user.id}`, file, {
+  const blob = await putPrivate(`avatars/${session.user.id}`, file, {
     contentType: file.type,
     // The path is derived from the user id, so a new upload replaces the old.
     allowOverwrite: true,
     addRandomSuffix: false,
   });
 
+  /*
+   * The stored value is a route on this app, not a blob address. The store is
+   * private, so there is no address to store — and routing through here means
+   * an avatar is only served to somebody signed in.
+   */
+  const image = `/api/v1/profile/avatar/${session.user.id}?v=${Date.now()}`;
+
   await db
     .update(users)
-    .set({ image: blob.url, updatedAt: new Date() })
+    .set({ image, updatedAt: new Date() })
     .where(eq(users.id, session.user.id));
 
-  return ok({ image: blob.url });
+  void blob;
+
+  return ok({ image });
 });

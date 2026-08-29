@@ -28,6 +28,17 @@ import { notifyFamily } from '@/lib/notifications/service';
 
 const MAX_MESSAGE_LENGTH = 2_000;
 
+/**
+ * Where a voice note is played from.
+ *
+ * Derived, never stored. The recordings sit in a private blob store with no
+ * fetchable address of their own, so what the client receives is a route on
+ * this app that checks membership and streams the audio back.
+ */
+function audioEndpoint(familyId: string, messageId: string): string {
+  return `/api/v1/families/${familyId}/messages/${messageId}/audio`;
+}
+
 /** How much of a message a notification shows. */
 const PREVIEW_LENGTH = 120;
 
@@ -93,7 +104,13 @@ export interface MessageView {
   senderName: string;
   senderImage: string | null;
   content: string;
-  /** Present on a voice note. Null on an ordinary message. */
+  /**
+   * Where to play a voice note from, or null on an ordinary message.
+   *
+   * An endpoint on this app, never a blob address: recordings live in a
+   * private store and are streamed back only after membership is checked. It
+   * is derived rather than stored so the route can move without a migration.
+   */
   audioUrl: string | null;
   audioDurationMs: number | null;
   deleted: boolean;
@@ -130,7 +147,7 @@ export async function listMessages(
       senderName: users.name,
       senderImage: users.image,
       content: messages.content,
-      audioUrl: messages.audioUrl,
+      audioPath: messages.audioPath,
       audioDurationMs: messages.audioDurationMs,
       deletedAt: messages.deletedAt,
       createdAt: messages.createdAt,
@@ -145,13 +162,13 @@ export async function listMessages(
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  return rows.map(({ deletedAt, content, audioUrl, audioDurationMs, ...rest }) => ({
+  return rows.map(({ deletedAt, content, audioPath, audioDurationMs, ...rest }) => ({
     ...rest,
     deleted: deletedAt !== null,
     // A deleted message keeps its slot in the thread but not its content —
     // and a deleted voice note must not keep a playable recording either.
     content: deletedAt !== null ? '' : content,
-    audioUrl: deletedAt !== null ? null : audioUrl,
+    audioUrl: deletedAt !== null || !audioPath ? null : audioEndpoint(familyId, rest.id),
     audioDurationMs: deletedAt !== null ? null : audioDurationMs,
   }));
 }
@@ -171,7 +188,7 @@ export async function listMessagesSince(
       senderName: users.name,
       senderImage: users.image,
       content: messages.content,
-      audioUrl: messages.audioUrl,
+      audioPath: messages.audioPath,
       audioDurationMs: messages.audioDurationMs,
       deletedAt: messages.deletedAt,
       createdAt: messages.createdAt,
@@ -182,11 +199,11 @@ export async function listMessagesSince(
     .orderBy(asc(messages.createdAt))
     .limit(100);
 
-  return rows.map(({ deletedAt, content, audioUrl, audioDurationMs, ...rest }) => ({
+  return rows.map(({ deletedAt, content, audioPath, audioDurationMs, ...rest }) => ({
     ...rest,
     deleted: deletedAt !== null,
     content: deletedAt !== null ? '' : content,
-    audioUrl: deletedAt !== null ? null : audioUrl,
+    audioUrl: deletedAt !== null || !audioPath ? null : audioEndpoint(familyId, rest.id),
     audioDurationMs: deletedAt !== null ? null : audioDurationMs,
   }));
 }
@@ -200,7 +217,7 @@ export async function sendMessage(
   familyId: string,
   content: string,
   /** Supplied when the message is a recording rather than typed text. */
-  audio?: { url: string; durationMs: number },
+  audio?: { path: string; durationMs: number },
 ): Promise<MessageView> {
   await requireMembership(senderId, familyId);
 
@@ -230,7 +247,7 @@ export async function sendMessage(
       familyId,
       senderId,
       content: body,
-      ...(audio ? { audioUrl: audio.url, audioDurationMs: audio.durationMs } : {}),
+      ...(audio ? { audioPath: audio.path, audioDurationMs: audio.durationMs } : {}),
     })
     .returning();
 
@@ -278,7 +295,7 @@ export async function sendMessage(
   return {
     id: inserted.id,
     senderId,
-    audioUrl: inserted.audioUrl,
+    audioUrl: inserted.audioPath ? audioEndpoint(familyId, inserted.id) : null,
     audioDurationMs: inserted.audioDurationMs,
     senderName,
     senderImage: sender?.image ?? null,

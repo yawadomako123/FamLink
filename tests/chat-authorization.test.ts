@@ -300,16 +300,17 @@ describe('notifying', () => {
  * voice note that still has a playable URL is not deleted.
  */
 describe('voice notes', () => {
-  const audio = { url: 'https://blob.example/voice/abc.webm', durationMs: 4200 };
+  const audio = { path: 'voice/fam/user-abc123.webm', durationMs: 4200 };
 
   it('stores the recording alongside the thread', async () => {
     const sent = await sendMessage(member.id, familyId, '', audio);
 
-    expect(sent.audioUrl).toBe(audio.url);
+    expect(sent.audioUrl, 'playback goes through this app, not the blob store')
+      .toBe(`/api/v1/families/${familyId}/messages/${sent.id}/audio`);
     expect(sent.audioDurationMs).toBe(4200);
 
     const [listed] = await listMessages(owner.id, familyId);
-    expect(listed?.audioUrl).toBe(audio.url);
+    expect(listed?.audioUrl).toContain('/audio');
     expect(listed?.audioDurationMs).toBe(4200);
   });
 
@@ -364,5 +365,59 @@ describe('typing hints', () => {
   /* The hint carries a name, so it is not for people outside the family. */
   it('refuses a non-member', async () => {
     await expectApiError(announceTyping(outsider.id, familyId), 404);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Where a voice note is played from.
+ *
+ * Recordings live in a private blob store, so a message never carries a blob
+ * address — it carries a route on this app, which checks family membership
+ * before streaming anything. These assert the contract the client relies on;
+ * the route's own guard is exercised through `listMessages` scoping below.
+ */
+describe('voice note playback addresses', () => {
+  const audio = { path: 'voice/fam/user-abc123.webm', durationMs: 4200 };
+
+  it('never hands out a blob address', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+
+    expect(sent.audioUrl).not.toContain('blob.vercel-storage.com');
+    expect(sent.audioUrl).not.toContain(audio.path);
+    expect(sent.audioUrl?.startsWith('/api/'), 'must be a route on this app').toBe(true);
+  });
+
+  it('addresses the note by family and message, so the route can scope it', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+
+    expect(sent.audioUrl).toBe(`/api/v1/families/${familyId}/messages/${sent.id}/audio`);
+  });
+
+  it('gives an ordinary message no playback address at all', async () => {
+    const sent = await sendMessage(member.id, familyId, 'just typing');
+
+    expect(sent.audioUrl).toBeNull();
+    expect(sent.audioDurationMs).toBeNull();
+  });
+
+  it('stops offering one once the message is deleted', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+    await deleteMessage(member.id, familyId, sent.id);
+
+    const [listed] = await listMessages(owner.id, familyId);
+    expect(listed?.audioUrl, 'a deleted note must not stay playable').toBeNull();
+  });
+
+  it('keeps the recording out of reach of another family', async () => {
+    const stranger = await createUser('Other Household');
+    const elsewhere = await createFamily(stranger.id, 'Somewhere Else');
+
+    await sendMessage(member.id, familyId, '', audio);
+
+    // The route resolves a message by id *and* family; nothing belonging to
+    // this thread is reachable through another one.
+    expect(await listMessages(stranger.id, elsewhere.id)).toHaveLength(0);
   });
 });
