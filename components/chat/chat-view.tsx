@@ -9,6 +9,7 @@ import { useRealtime } from '@/hooks/useRealtime';
 import { api, errorMessage } from '@/lib/api/client';
 import { formatClock, formatDayLabel } from '@/lib/time';
 import { avatarColor, cn } from '@/lib/utils';
+import { TypingIndicator, VoiceNote, VoiceRecorder } from './voice';
 
 export interface MessageReactionSummary {
   emoji: string;
@@ -19,12 +20,23 @@ export interface MessageReactionSummary {
 /** Mirrors ALLOWED_REACTIONS on the server; the API rejects anything else. */
 const REACTIONS = ['❤️', '👍', '😂', '😮', '😢', '🙏'] as const;
 
+/** How long a typing indicator survives without a fresh hint. */
+const TYPING_TTL_MS = 6000;
+
+/** The floor between outgoing typing hints, whatever the typing speed. */
+const TYPING_PING_MS = 3000;
+
+
+
 export interface ChatMessage {
   id: string;
   senderId: string;
   senderName: string;
   senderImage: string | null;
   content: string;
+  /** Present on a voice note. */
+  audioUrl?: string | null;
+  audioDurationMs?: number | null;
   deleted: boolean;
   createdAt: string;
   reactions?: MessageReactionSummary[];
@@ -55,6 +67,8 @@ export function ChatView({
   const [draft, setDraft] = React.useState('');
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /** Who is composing right now, by user id, with the moment last heard from. */
+  const [typing, setTyping] = React.useState<Record<string, { name: string; at: number }>>({});
 
   const bottomRef = React.useRef<HTMLDivElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
@@ -90,13 +104,70 @@ export function ChatView({
   }, [familyId]);
 
   const onEvent = React.useCallback(
-    (type: string) => {
-      if (type === 'message') void appendNew();
+    (type: string, event?: { actorId?: string; actorName?: string }) => {
+      if (type === 'message') {
+        void appendNew();
+
+        // Their message arrived, so they have stopped composing.
+        const sender = event?.actorId;
+        if (sender) {
+          setTyping((current) => {
+            const { [sender]: _gone, ...rest } = current;
+            return rest;
+          });
+        }
+        return;
+      }
+
+      if (type === 'typing' && event?.actorId && event.actorId !== viewerId) {
+        const { actorId, actorName } = event;
+        setTyping((current) => ({
+          ...current,
+          [actorId]: { name: actorName ?? 'Someone', at: Date.now() },
+        }));
+      }
     },
-    [appendNew],
+    [appendNew, viewerId],
   );
 
   const { status } = useRealtime({ familyId, onEvent });
+
+  /*
+   * Indicators expire on their own. There is no "stopped typing" event and
+   * there should not be: somebody who closes the tab mid-sentence would never
+   * send one, and their name would sit there for the rest of the day.
+   */
+  React.useEffect(() => {
+    if (Object.keys(typing).length === 0) return;
+
+    const timer = setInterval(() => {
+      const cutoff = Date.now() - TYPING_TTL_MS;
+      setTyping((current) => {
+        const next = Object.fromEntries(
+          Object.entries(current).filter(([, v]) => v.at > cutoff),
+        );
+        // Same object when nothing expired, so this does not re-render forever.
+        return Object.keys(next).length === Object.keys(current).length ? current : next;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [typing]);
+
+  /*
+   * Announcing is throttled hard. It is a courtesy, not data: one hint every
+   * few seconds says everything a dozen a second would, and the endpoint does
+   * a single NOTIFY per call.
+   */
+  const lastAnnounced = React.useRef(0);
+  const announceTyping = React.useCallback(() => {
+    const now = Date.now();
+    if (now - lastAnnounced.current < TYPING_PING_MS) return;
+    lastAnnounced.current = now;
+    void api.post(`/api/v1/families/${familyId}/typing`).catch(() => {
+      // A dropped hint costs a missing indicator for a second. Not worth surfacing.
+    });
+  }, [familyId]);
 
   /* Poll as a fallback whenever the stream is not carrying updates. */
   React.useEffect(() => {
@@ -327,6 +398,8 @@ export function ChatView({
         <div ref={bottomRef} />
       </div>
 
+      <TypingIndicator typing={typing} />
+
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -343,7 +416,10 @@ export function ChatView({
           <textarea
             id="chat-input"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              if (e.target.value.trim()) announceTyping();
+            }}
             onKeyDown={(e) => {
               // Enter sends; Shift+Enter is a newline.
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -359,14 +435,29 @@ export function ChatView({
             className="flex-1 resize-none max-h-32 px-3.5 py-2.5 rounded-xl bg-inset text-fg border border-line-strong placeholder:text-subtle outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/25"
           />
 
-          <Button
-            type="submit"
-            aria-label="Send message"
-            disabled={!draft.trim() || sending}
-            className="size-11 rounded-xl p-0 shrink-0"
-          >
-            <SendHorizontal aria-hidden className="size-5" />
-          </Button>
+          {/*
+            The recorder replaces the send button only while there is nothing
+            typed. A half-written message plus a recording is two messages, and
+            deciding which one "send" means is a choice nobody should have to
+            make mid-sentence.
+          */}
+          {draft.trim() ? (
+            <Button
+              type="submit"
+              aria-label="Send message"
+              disabled={sending}
+              className="size-11 rounded-xl p-0 shrink-0"
+            >
+              <SendHorizontal aria-hidden className="size-5" />
+            </Button>
+          ) : (
+            <VoiceRecorder
+              familyId={familyId}
+              disabled={sending}
+              onSent={() => void appendNew()}
+              onError={setError}
+            />
+          )}
         </div>
       </form>
     </div>
@@ -501,7 +592,10 @@ function MessageRow({
 
           <div
             className={cn(
-              'px-3.5 py-2 rounded-2xl text-sm leading-relaxed break-words whitespace-pre-wrap',
+              'px-3.5 py-2 rounded-2xl text-sm leading-relaxed break-words',
+              // A voice note lays out its own controls; only text needs the
+              // newline handling.
+              !message.audioUrl && 'whitespace-pre-wrap',
               isOwn
                 ? 'bg-brand-600 text-white rounded-br-md'
                 : 'bg-card border border-line text-fg rounded-bl-md',
@@ -509,7 +603,15 @@ function MessageRow({
               message.failed && 'ring-1 ring-danger-500',
             )}
           >
-            {message.content}
+            {message.audioUrl ? (
+              <VoiceNote
+                url={message.audioUrl}
+                durationMs={message.audioDurationMs ?? null}
+                mine={isOwn}
+              />
+            ) : (
+              message.content
+            )}
           </div>
 
           {/* Actions for received messages (appear on the right) */}

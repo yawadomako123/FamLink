@@ -10,6 +10,7 @@ import {
   LogOut,
   MoreVertical,
   Pencil,
+  PhoneCall,
   Plus,
   ShieldCheck,
   Ticket,
@@ -28,6 +29,7 @@ import { InviteDialog } from './invite-dialog';
 import { useFamilySwitch } from './family-switcher';
 import { AskCheckInButton } from '@/components/checkins/check-in-panel';
 import { StartCallButtons } from '@/components/calls/call-manager';
+import { CallPicker } from '@/components/calls/call-picker';
 import { api, errorMessage } from '@/lib/api/client';
 import { timeAgo } from '@/lib/time';
 import { cn } from '@/lib/utils';
@@ -67,6 +69,7 @@ export function FamilyView({
   const [leaveOpen, setLeaveOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [pendingRemoval, setPendingRemoval] = React.useState<FamilyMemberView | null>(null);
+  const [callPickerOpen, setCallPickerOpen] = React.useState(false);
 
   const isOwner = family.role === 'owner';
   const canManage = family.role === 'owner' || family.role === 'admin';
@@ -132,14 +135,25 @@ export function FamilyView({
 
       {/* ---------------------------------------------------------------- */}
       <Card>
-        <CardHeader className="flex items-center justify-between gap-3">
+        <CardHeader className="flex items-center justify-between gap-2">
           <CardTitle>Members</CardTitle>
-          {canManage && (
-            <Button size="sm" onClick={() => setInviteOpen(true)}>
-              <UserPlus aria-hidden className="size-3.5" />
-              Invite
-            </Button>
-          )}
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Calling several people at once, which a single row cannot express. */}
+            {otherMembers.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={() => setCallPickerOpen(true)}>
+                <PhoneCall aria-hidden className="size-3.5" />
+                <span className="hidden sm:inline">Call…</span>
+              </Button>
+            )}
+
+            {canManage && (
+              <Button size="sm" onClick={() => setInviteOpen(true)}>
+                <UserPlus aria-hidden className="size-3.5" />
+                <span className="hidden sm:inline">Invite</span>
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
         <ul className="divide-y divide-line border-t border-line">
@@ -261,6 +275,18 @@ export function FamilyView({
       </Card>
 
       {/* ---------------------------------------------------------------- */}
+      {callPickerOpen && (
+        <CallPicker
+          familyId={family.id}
+          people={otherMembers.map((m) => ({
+            userId: m.userId,
+            name: m.name,
+            image: m.image,
+          }))}
+          onClose={() => setCallPickerOpen(false)}
+        />
+      )}
+
       <InviteDialog
         familyId={family.id}
         open={inviteOpen}

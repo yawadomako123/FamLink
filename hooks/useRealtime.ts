@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import type { RealtimeEventType } from '@/lib/realtime/events';
+import { isRealtimeEvent, type RealtimeEvent, type RealtimeEventType } from '@/lib/realtime/events';
 
 /**
  * Subscribes to a family's realtime event stream.
@@ -27,7 +27,12 @@ const MAX_CONSECUTIVE_FAILURES = 3;
 
 export interface UseRealtimeOptions {
   familyId: string | null;
-  onEvent: (type: RealtimeEventType) => void;
+  /**
+   * The event itself is passed as well as its type, for the handful of events
+   * that carry one — `emergency` names who raised it, `typing` names who is
+   * composing. Everything else is a bare invalidation hint.
+   */
+  onEvent: (type: RealtimeEventType, event?: RealtimeEvent) => void;
   /** Set false to skip SSE entirely (e.g. the user has no family yet). */
   enabled?: boolean;
 }
@@ -81,8 +86,17 @@ export function useRealtime({
         setStatus('live');
       });
 
-      const handle = (type: RealtimeEventType) => () => {
-        onEventRef.current(type);
+      const handle = (type: RealtimeEventType) => (raw: MessageEvent) => {
+        let parsed: RealtimeEvent | undefined;
+
+        try {
+          const candidate: unknown = JSON.parse(raw.data);
+          if (isRealtimeEvent(candidate)) parsed = candidate;
+        } catch {
+          // A hint that will not parse is still a hint that something changed.
+        }
+
+        onEventRef.current(type, parsed);
       };
 
       for (const type of [
@@ -92,6 +106,7 @@ export function useRealtime({
         'emergency',
         'members',
         'call',
+        'typing',
       ] as const) {
         source.addEventListener(type, handle(type));
       }

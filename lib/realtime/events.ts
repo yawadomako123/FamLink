@@ -34,7 +34,14 @@ export type RealtimeEventType =
    * message. Like every other event this carries no payload — the client
    * fetches the call state and any signals addressed to it.
    */
-  | 'call';
+  | 'call'
+  /**
+   * Somebody is composing a message.
+   *
+   * Purely ephemeral — nothing is stored, and a missed one costs nothing but a
+   * missing indicator for a couple of seconds.
+   */
+  | 'typing';
 
 export interface RealtimeEvent {
   /** Which family the change belongs to. Used for server-side filtering. */
@@ -43,9 +50,18 @@ export interface RealtimeEvent {
   /** Emitted at, as epoch milliseconds. Used to drop stale replays. */
   at: number;
   /**
-   * Only ever populated for `emergency`. Never contains coordinates.
+   * Populated for `emergency` and `typing`. Never contains coordinates.
    */
   actorName?: string;
+  /**
+   * Who caused the event. Only sent for `typing`, where the client needs it to
+   * recognise and ignore its own keystrokes.
+   *
+   * A user id is not sensitive within a family — everyone on this channel is
+   * already a member and can see the whole member list. It carries nothing
+   * about where anybody is, which is the line this file draws.
+   */
+  actorId?: string;
 }
 
 /** Postgres caps a NOTIFY payload at 8000 bytes; hints are far below that. */

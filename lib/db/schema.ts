@@ -505,6 +505,16 @@ export const messages = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     content: text('content').notNull(),
+    /**
+     * A recorded voice note, when there is one.
+     *
+     * Held beside `content` rather than replacing it: a voice note still has a
+     * text row for the notification preview and for anyone who cannot play
+     * audio, and the thread stays one ordered list of messages rather than two
+     * interleaved kinds.
+     */
+    audioUrl: text('audio_url'),
+    audioDurationMs: integer('audio_duration_ms'),
     /** Soft delete, so a removed message leaves the thread order intact. */
     deletedAt: timestamp('deleted_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

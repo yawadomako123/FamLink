@@ -10,11 +10,13 @@ import {
   removeMember,
 } from '@/lib/families/service';
 import {
+  announceTyping,
   countUnreadMessages,
   deleteMessage,
   listMessages,
   markThreadRead,
   sendMessage,
+  MAX_VOICE_NOTE_MS,
 } from '@/lib/chat/service';
 import { listNotifications } from '@/lib/notifications/service';
 import { updatePreferences } from '@/lib/notifications/preferences';
@@ -286,3 +288,81 @@ describe('notifying', () => {
     });
   });
 })
+
+/* ========================================================================== */
+
+/**
+ * Voice notes.
+ *
+ * A recording is still a message: it takes a row in the same thread, keeps the
+ * same ordering, and carries text for the notification preview and for anyone
+ * who cannot play audio. What it must not do is survive deletion — a deleted
+ * voice note that still has a playable URL is not deleted.
+ */
+describe('voice notes', () => {
+  const audio = { url: 'https://blob.example/voice/abc.webm', durationMs: 4200 };
+
+  it('stores the recording alongside the thread', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+
+    expect(sent.audioUrl).toBe(audio.url);
+    expect(sent.audioDurationMs).toBe(4200);
+
+    const [listed] = await listMessages(owner.id, familyId);
+    expect(listed?.audioUrl).toBe(audio.url);
+    expect(listed?.audioDurationMs).toBe(4200);
+  });
+
+  it('gives it readable text even though nothing was typed', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+
+    expect(sent.content.length).toBeGreaterThan(0);
+  });
+
+  it('notifies the family like any other message', async () => {
+    await sendMessage(member.id, familyId, '', audio);
+
+    const [notification] = await listNotifications(owner.id, familyId);
+    expect(notification?.type).toBe('NEW_MESSAGE');
+    expect(notification?.message.length).toBeGreaterThan(0);
+  });
+
+  it('takes no recording longer than the cap', async () => {
+    await expectApiError(
+      sendMessage(member.id, familyId, '', { ...audio, durationMs: MAX_VOICE_NOTE_MS + 1 }),
+      400,
+    );
+    await expectApiError(sendMessage(member.id, familyId, '', { ...audio, durationMs: 0 }), 400);
+  });
+
+  it('still refuses an empty message with no recording', async () => {
+    await expectApiError(sendMessage(member.id, familyId, '   '), 400);
+  });
+
+  it('leaves nothing playable behind once deleted', async () => {
+    const sent = await sendMessage(member.id, familyId, '', audio);
+    await deleteMessage(member.id, familyId, sent.id);
+
+    const [listed] = await listMessages(owner.id, familyId);
+    expect(listed?.deleted).toBe(true);
+    expect(listed?.audioUrl, 'a deleted voice note must not stay playable').toBeNull();
+    expect(listed?.audioDurationMs).toBeNull();
+  });
+
+  it('refuses a non-member', async () => {
+    await expectApiError(sendMessage(outsider.id, familyId, '', audio), 404);
+  });
+});
+
+/* ========================================================================== */
+
+describe('typing hints', () => {
+  it('accepts a member', async () => {
+    await expect(announceTyping(member.id, familyId)).resolves.toBeUndefined();
+  });
+
+  /* The hint carries a name, so it is not for people outside the family. */
+  it('refuses a non-member', async () => {
+    await expectApiError(announceTyping(outsider.id, familyId), 404);
+  });
+});

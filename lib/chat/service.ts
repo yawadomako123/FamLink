@@ -47,6 +47,27 @@ function preview(content: string): string {
     : collapsed;
 }
 
+/**
+ * Announces that somebody is composing a message.
+ *
+ * Membership is checked because the hint carries a name, and a name is
+ * something only the family should be able to pull out of the channel.
+ */
+export async function announceTyping(userId: string, familyId: string): Promise<void> {
+  await requireMembership(userId, familyId);
+
+  const [user] = await db
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  await publishEvent(familyId, 'typing', {
+    actorName: user?.name ?? 'Someone',
+    actorId: userId,
+  });
+}
+
 /** Members whose phones should stay quiet because they are already reading. */
 async function activeReaders(familyId: string, exclude: string): Promise<string[]> {
   const since = new Date(Date.now() - ACTIVE_READER_WINDOW_MS);
@@ -72,9 +93,15 @@ export interface MessageView {
   senderName: string;
   senderImage: string | null;
   content: string;
+  /** Present on a voice note. Null on an ordinary message. */
+  audioUrl: string | null;
+  audioDurationMs: number | null;
   deleted: boolean;
   createdAt: Date;
 }
+
+/** The longest voice note the composer will record, and the server accept. */
+export const MAX_VOICE_NOTE_MS = 2 * 60 * 1000;
 
 /* -------------------------------------------------------------------------- */
 /* Reading                                                                     */
@@ -103,6 +130,8 @@ export async function listMessages(
       senderName: users.name,
       senderImage: users.image,
       content: messages.content,
+      audioUrl: messages.audioUrl,
+      audioDurationMs: messages.audioDurationMs,
       deletedAt: messages.deletedAt,
       createdAt: messages.createdAt,
     })
@@ -116,11 +145,14 @@ export async function listMessages(
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
-  return rows.map(({ deletedAt, content, ...rest }) => ({
+  return rows.map(({ deletedAt, content, audioUrl, audioDurationMs, ...rest }) => ({
     ...rest,
     deleted: deletedAt !== null,
-    // A deleted message keeps its slot in the thread but not its content.
+    // A deleted message keeps its slot in the thread but not its content —
+    // and a deleted voice note must not keep a playable recording either.
     content: deletedAt !== null ? '' : content,
+    audioUrl: deletedAt !== null ? null : audioUrl,
+    audioDurationMs: deletedAt !== null ? null : audioDurationMs,
   }));
 }
 
@@ -139,6 +171,8 @@ export async function listMessagesSince(
       senderName: users.name,
       senderImage: users.image,
       content: messages.content,
+      audioUrl: messages.audioUrl,
+      audioDurationMs: messages.audioDurationMs,
       deletedAt: messages.deletedAt,
       createdAt: messages.createdAt,
     })
@@ -148,10 +182,12 @@ export async function listMessagesSince(
     .orderBy(asc(messages.createdAt))
     .limit(100);
 
-  return rows.map(({ deletedAt, content, ...rest }) => ({
+  return rows.map(({ deletedAt, content, audioUrl, audioDurationMs, ...rest }) => ({
     ...rest,
     deleted: deletedAt !== null,
     content: deletedAt !== null ? '' : content,
+    audioUrl: deletedAt !== null ? null : audioUrl,
+    audioDurationMs: deletedAt !== null ? null : audioDurationMs,
   }));
 }
 
@@ -163,19 +199,39 @@ export async function sendMessage(
   senderId: string,
   familyId: string,
   content: string,
+  /** Supplied when the message is a recording rather than typed text. */
+  audio?: { url: string; durationMs: number },
 ): Promise<MessageView> {
   await requireMembership(senderId, familyId);
 
   const trimmed = content.trim();
 
-  if (trimmed.length === 0) throw Errors.badRequest('Type a message first.');
+  /*
+   * A voice note carries no typed text, so the empty check applies only to
+   * ordinary messages. It still gets a `content` string — the notification
+   * preview and anyone who cannot play audio both need something to read.
+   */
+  if (!audio && trimmed.length === 0) throw Errors.badRequest('Type a message first.');
   if (trimmed.length > MAX_MESSAGE_LENGTH) {
     throw Errors.badRequest(`Messages are limited to ${MAX_MESSAGE_LENGTH} characters.`);
   }
 
+  if (audio && (audio.durationMs <= 0 || audio.durationMs > MAX_VOICE_NOTE_MS)) {
+    throw Errors.badRequest(
+      `Voice notes can be up to ${Math.round(MAX_VOICE_NOTE_MS / 1000)} seconds long.`,
+    );
+  }
+
+  const body = audio ? trimmed || '\u{1F3A4} Voice note' : trimmed;
+
   const [inserted] = await db
     .insert(messages)
-    .values({ familyId, senderId, content: trimmed })
+    .values({
+      familyId,
+      senderId,
+      content: body,
+      ...(audio ? { audioUrl: audio.url, audioDurationMs: audio.durationMs } : {}),
+    })
     .returning();
 
   if (!inserted) throw Errors.internal();
@@ -208,7 +264,9 @@ export async function sendMessage(
     familyId,
     type: 'NEW_MESSAGE',
     title: senderName,
-    message: preview(trimmed),
+    // `body`, not `trimmed`: a voice note has no typed text, and a
+    // notification reading "Nana" with an empty line under it says nothing.
+    message: preview(body),
     data: { familyId, messageId: String(inserted.id), actorId: senderId },
     exclude: senderId,
     // One tray entry per family thread: a new message replaces the last
@@ -220,6 +278,8 @@ export async function sendMessage(
   return {
     id: inserted.id,
     senderId,
+    audioUrl: inserted.audioUrl,
+    audioDurationMs: inserted.audioDurationMs,
     senderName,
     senderImage: sender?.image ?? null,
     content: inserted.content,

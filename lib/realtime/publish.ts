@@ -22,13 +22,14 @@ import {
 export async function publishEvent(
   familyId: string,
   type: RealtimeEventType,
-  options: { actorName?: string } = {},
+  options: { actorName?: string; actorId?: string } = {},
 ): Promise<void> {
   const event: RealtimeEvent = {
     familyId,
     type,
     at: Date.now(),
     ...(options.actorName ? { actorName: options.actorName } : {}),
+    ...(options.actorId ? { actorId: options.actorId } : {}),
   };
 
   const payload = JSON.stringify(event);
