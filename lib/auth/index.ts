@@ -105,6 +105,32 @@ export const auth = betterAuth({
     accountLinking: {
       enabled: true,
       trustedProviders: ['google'],
+
+      /*
+       * The local account's email does not have to be verified first.
+       *
+       * This is what stopped Google sign-in working at all. Better Auth
+       * defaults it to true, and FamLink verifies nobody's email — sign-up is
+       * by family invitation, and blocking people on a verification mail when
+       * no mail provider need be configured would be worse than not sending
+       * one. So every existing account has `emailVerified: false`, every
+       * attempt to link Google to one returned "account not linked", and the
+       * only accounts that could ever have worked were ones that did not exist
+       * yet.
+       *
+       * What the default guards against is pre-registration hijacking: someone
+       * registers a password account under an address they do not own, waits
+       * for the real owner to arrive via Google, and is handed a link into
+       * their account. Turning it off accepts that risk, and the mitigation is
+       * that it is not much of a door here — an account on its own sees
+       * nothing. Everything in FamLink hangs off family membership, and that
+       * takes an invitation from somebody already inside.
+       *
+       * Google is still required to be the one asserting the address, via
+       * trustedProviders above. This loosens what we demand of *our* record,
+       * not of theirs.
+       */
+      requireLocalEmailVerified: false,
     },
 
     /*
