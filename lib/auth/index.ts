@@ -106,6 +106,31 @@ export const auth = betterAuth({
       enabled: true,
       trustedProviders: ['google'],
     },
+
+    /*
+     * OAuth state lives in the database, and the database alone.
+     *
+     * Better Auth keeps the state server-side either way, but by default it
+     * *also* demands a matching cookie on the callback — and that cookie is
+     * what made Google sign-in impossible here. It lives five minutes while
+     * the record it guards lives ten, so a slow trip through Google's account
+     * chooser and two-factor prompt outlives it; and a flow begun inside the
+     * installed iOS app can be handed back to Safari, which never had the
+     * cookie at all. Measured against production: with the cookie present the
+     * callback reached the code exchange, without it the callback died at
+     * state verification.
+     *
+     * What the cookie bought was binding the flow to the browser that began
+     * it. Dropping it leaves the state itself as the guard: thirty-two random
+     * characters we issue, hold server-side, expire after ten minutes and
+     * delete the first time they are redeemed. An attacker needs both a state
+     * they cannot predict and a Google code they cannot mint. The risk that
+     * remains is login CSRF — being walked into somebody else's account,
+     * rather than out of your own — and that is the price of the feature
+     * working at all on the devices this family actually uses.
+     */
+    storeStateStrategy: 'database',
+    skipStateCookieCheck: true,
   },
 
   user: {
