@@ -40,6 +40,15 @@ export function GoogleButton({
       const { error: failed } = await authClient.signIn.social({
         provider: 'google',
         callbackURL,
+        /*
+         * Where Google sends somebody when the round trip fails.
+         *
+         * Without this they land on better-auth's own `/api/auth/error` page:
+         * unstyled, outside the app, and wearing a message like
+         * `state_not_found`. It reads as being silently signed out, which is
+         * how this was first reported.
+         */
+        errorCallbackURL: '/login?authError=google',
       });
 
       if (failed) {
