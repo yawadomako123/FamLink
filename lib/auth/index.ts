@@ -7,7 +7,7 @@ import { bearer } from 'better-auth/plugins';
 
 import { db } from '@/lib/db';
 import { accounts, sessions, users, verifications } from '@/lib/db/schema';
-import { serverEnv, publicEnv } from '@/lib/env';
+import { serverEnv, publicEnv, isGoogleAuthEnabled } from '@/lib/env';
 import { sendEmail } from '@/lib/email';
 
 const env = serverEnv();
@@ -77,6 +77,35 @@ export const auth = betterAuth({
      * more than a minute.
      */
     cookieCache: { enabled: true, maxAge: 60 },
+  },
+
+  /*
+   * Google, when it is configured. Omitted entirely otherwise, so the provider
+   * list never advertises something that cannot complete.
+   */
+  socialProviders: isGoogleAuthEnabled()
+    ? {
+        google: {
+          clientId: env.GOOGLE_CLIENT_ID!,
+          clientSecret: env.GOOGLE_CLIENT_SECRET!,
+        },
+      }
+    : {},
+
+  account: {
+    /*
+     * Signing in with Google when an account already exists for that address
+     * attaches to it rather than creating a second one.
+     *
+     * Google is trusted for this because it verifies the address itself; the
+     * same courtesy must not be extended to a provider that does not, or
+     * anyone able to create an account at that provider with somebody else's
+     * address could walk into their family.
+     */
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ['google'],
+    },
   },
 
   user: {

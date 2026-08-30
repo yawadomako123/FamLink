@@ -26,6 +26,14 @@ const serverSchema = z.object({
   BLOB_READ_WRITE_TOKEN: z.string().optional(),
 
   /*
+   * Google sign-in. Both halves or neither: a client id without a secret
+   * produces a button that fails at the point somebody trusts it, which is
+   * worse than no button. `isGoogleAuthEnabled` enforces the pairing.
+   */
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+
+  /*
    * TURN relay for WebRTC. Optional, but without it roughly 15-20% of calls
    * cannot connect — symmetric NAT, carrier-grade NAT and restrictive
    * firewalls have no direct path. STUN alone covers most home broadband.
@@ -76,6 +84,18 @@ export function unpooledDatabaseUrl(): string {
 
 export function isAvatarUploadEnabled(): boolean {
   return Boolean(serverEnv().BLOB_READ_WRITE_TOKEN);
+}
+
+/**
+ * Whether Google sign-in is configured.
+ *
+ * Both halves are required. Half-configured, the button would appear, send
+ * somebody to Google, and fail on the way back — after they had already
+ * approved. Better to not offer it.
+ */
+export function isGoogleAuthEnabled(): boolean {
+  const env = serverEnv();
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
 }
 
 /**
