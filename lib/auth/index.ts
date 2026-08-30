@@ -133,6 +133,41 @@ export const auth = betterAuth({
     skipStateCookieCheck: true,
   },
 
+  /*
+   * Sign-in limits a household can live with.
+   *
+   * The default is three requests per ten seconds for anything under
+   * `/sign-in`, `/sign-up`, `/change-password` or `/change-email`, counted by
+   * IP. Two things make that wrong here. A family shares one home address, so
+   * the budget is spent by whoever logs in first and the next person is
+   * refused for something they did not do. And `/sign-in/social` is under that
+   * prefix too, so a third tap of "Continue with Google" is rejected before it
+   * reaches Google — which is exactly what a person does when the first two
+   * taps appear to do nothing.
+   *
+   * These are still low enough to make guessing a password hopeless: twenty
+   * tries a minute against ten characters is not an attack, it is a rounding
+   * error. Brute force is not what this limit is for; it is there to stop a
+   * runaway client.
+   *
+   * Worth knowing: storage is in-process, so on serverless each instance keeps
+   * its own count and the real ceiling is higher than it looks. That argues
+   * for generosity here, not severity.
+   */
+  rateLimit: {
+    enabled: true,
+    window: 60,
+    max: 100,
+    customRules: {
+      '/sign-in/email': { window: 60, max: 20 },
+      '/sign-up/email': { window: 60, max: 10 },
+      // Starting an OAuth flow is not an attempt at anything — the attempt
+      // happens at Google. Rejecting it only strands people.
+      '/sign-in/social': { window: 60, max: 30 },
+      '/callback/*': { window: 60, max: 30 },
+    },
+  },
+
   user: {
     changeEmail: { enabled: false },
     deleteUser: { enabled: false },
