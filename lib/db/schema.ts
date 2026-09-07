@@ -116,6 +116,21 @@ export const users = pgTable('users', {
    * should reset the preference, never delete the person.
    */
   lastFamilyId: uuid('last_family_id'),
+  /**
+   * Whether this person operates FamLink itself.
+   *
+   * Nothing to do with `familyRole`, which is a role *inside* one family and
+   * says nothing about the platform. A family owner runs their household; a
+   * platform admin runs the service and belongs to no family in particular.
+   * Keeping them separate is what stops the owner of any family being able to
+   * reach the admin area by promoting themselves.
+   *
+   * Not settable through any API. It is granted by `npm run admin:grant`,
+   * against the database, by somebody with database access — because the
+   * first one has to come from outside the app, and because there is no good
+   * reason for a running web request to be able to mint one.
+   */
+  isPlatformAdmin: boolean('is_platform_admin').notNull().default(false),
   createdAt: timestamp('createdAt', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updatedAt', { withTimezone: true }).notNull().defaultNow(),
 });

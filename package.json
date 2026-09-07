@@ -2,7 +2,7 @@
   "name": "famlink",
   "version": "0.1.0",
   "private": true,
-  "description": "FamLink — a private family coordination and safety PWA.",
+  "description": "FamLink \u2014 a private family coordination and safety PWA.",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -22,7 +22,8 @@
     "db:export": "node scripts/export-schema.mjs",
     "db:seed": "tsx --conditions=react-server scripts/seed.ts",
     "icons": "node scripts/generate-icons.mjs",
-    "verify": "npm run typecheck && npm run lint && npm run test && npm run build"
+    "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
+    "admin:grant": "tsx scripts/grant-admin.ts"
   },
   "dependencies": {
     "@vercel/blob": "^2.8.0",
