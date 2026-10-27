@@ -94,13 +94,44 @@ export const sharingStateSchema = z.enum(['off', 'sharing', 'paused']);
 /** The MVP writes only `everyone` or `nobody`; `selected` ships later. */
 export const visibilitySchema = z.enum(['everyone', 'nobody']);
 
+/**
+ * How long a timed sharing window may last.
+ *
+ * Capped at a day because the point of the feature is that it ends: a window
+ * long enough to be forgotten is indistinguishable from sharing indefinitely,
+ * which is already available by leaving it off.
+ */
+export const MAX_SHARING_DURATION_MINUTES = 24 * 60;
+
+export const sharingDurationSchema = z
+  .number()
+  .int()
+  .min(1, 'A sharing window must last at least a minute.')
+  .max(MAX_SHARING_DURATION_MINUTES, 'A sharing window can last at most 24 hours.')
+  /** Null clears any window, sharing until switched off. */
+  .nullable()
+  .optional();
+
 export const updateSharingSchema = z
   .object({
     state: sharingStateSchema.optional(),
     visibility: visibilitySchema.optional(),
+    /*
+     * The service has accepted and enforced this since timed sharing was
+     * written — on write in `recordLocation` and on read in
+     * `getFamilyLocations` — but it was missing here, so every route stripped
+     * it before the service ever saw one. The whole feature was unreachable.
+     */
+    durationMinutes: sharingDurationSchema,
   })
-  .refine((v) => v.state !== undefined || v.visibility !== undefined, {
-    message: 'Provide a sharing state, a visibility setting, or both.',
+  .refine(
+    (v) =>
+      v.state !== undefined || v.visibility !== undefined || v.durationMinutes !== undefined,
+    { message: 'Provide a sharing state, a visibility setting, or a duration.' },
+  )
+  .refine((v) => !(v.state === 'off' && typeof v.durationMinutes === 'number'), {
+    message: 'A sharing window cannot be set while switching sharing off.',
+    path: ['durationMinutes'],
   });
 
 export const historyQuerySchema = z.object({

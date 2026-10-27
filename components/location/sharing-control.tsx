@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Eye, EyeOff, Info, MapPin, Pause, Play, Square } from 'lucide-react';
+import { Eye, EyeOff, Info, MapPin, Pause, Play, Square, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -23,6 +23,30 @@ import type { LocationSharingState, LocationVisibility } from '@/lib/db/schema';
  *  - Every failure mode says what happened and what the person can do.
  *  - It never implies sharing continues in the background.
  */
+/**
+ * The windows offered.
+ *
+ * Short and round. The value of a timed share is that it ends while you still
+ * remember switching it on, so the longest here is an afternoon rather than
+ * the day the schema permits.
+ */
+const SHARING_WINDOWS = [
+  { minutes: 15, label: '15 min' },
+  { minutes: 60, label: '1 hour' },
+  { minutes: 4 * 60, label: '4 hours' },
+] as const;
+
+/** "in 42 minutes" / "in 3 hours" — how long a window has left. */
+function timeUntil(at: number): string {
+  const minutes = Math.max(0, Math.round((at - Date.now()) / 60_000));
+
+  if (minutes < 1) return 'in less than a minute';
+  if (minutes < 60) return `in ${minutes} minute${minutes === 1 ? '' : 's'}`;
+
+  const hours = Math.round(minutes / 60);
+  return `in about ${hours} hour${hours === 1 ? '' : 's'}`;
+}
+
 export function SharingControl({
   familyId,
   familyName,
@@ -46,6 +70,7 @@ export function SharingControl({
     startSharing,
     pauseSharing,
     stopSharing,
+    expiresAt,
     dismissProblem,
   } = useLocation({ familyId, initialState });
 
@@ -114,11 +139,48 @@ export function SharingControl({
               disabled={pending || permission === 'unsupported'}
               label="Share my location with this family"
               onCheckedChange={(next) => {
-                if (next) void startSharing();
+                // The plain switch shares until switched off. A window is
+                // chosen deliberately, below, never guessed at here.
+                if (next) void startSharing(null);
                 else void stopSharing();
               }}
             />
           </div>
+
+          {/*
+            Sharing for a while, rather than until further notice.
+
+            Offered only while sharing is off, because the question is "how
+            long from now" — changing it mid-window would silently restart the
+            clock, and somebody who wants that can stop and start again.
+          */}
+          {!isOn && !isPaused && permission !== 'unsupported' && (
+            <div className="mt-4">
+              <p className="text-xs font-medium text-muted">Or share for a set time</p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                {SHARING_WINDOWS.map((window) => (
+                  <Button
+                    key={window.minutes}
+                    variant="outline"
+                    size="sm"
+                    disabled={pending}
+                    onClick={() => void startSharing(window.minutes)}
+                  >
+                    <Timer aria-hidden className="size-3.5" />
+                    {window.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* A window whose end nobody can see is just sharing with extra steps. */}
+          {isOn && expiresAt && (
+            <p className="text-xs text-on-tint-brand mt-3 inline-flex items-center gap-1.5">
+              <Timer aria-hidden className="size-3.5" />
+              Sharing stops {timeUntil(expiresAt)}
+            </p>
+          )}
 
           {/* The stop control stays visible whenever anything is being
               collected, so it is never more than one tap away. */}

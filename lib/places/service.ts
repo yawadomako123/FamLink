@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
   memberPlaceStates,
@@ -233,7 +233,23 @@ export async function evaluateAndRecordGeofences(
         })
         .onConflictDoUpdate({
           target: [memberPlaceStates.userId, memberPlaceStates.placeId],
-          set: { isInside: state.isInside, updatedAt: occurredAt },
+          set: {
+            isInside: state.isInside,
+            updatedAt: occurredAt,
+            /*
+             * `since` marks when the current state began, so it moves only
+             * when the state actually flips — not on every position that
+             * confirms it. Previously it was written on insert and never
+             * again, which left it meaning "first seen near this place"
+             * while reading as "here since". Nothing surfaces it yet; this
+             * is so it is already true when something does.
+             */
+            since: sql`case
+              when ${memberPlaceStates.isInside} is distinct from ${state.isInside}
+              then ${occurredAt}
+              else ${memberPlaceStates.since}
+            end`,
+          },
         });
     }
 

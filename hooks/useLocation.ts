@@ -52,7 +52,13 @@ export interface UseLocationResult {
   acquiring: boolean;
   /** Plain-language description of the current fix's precision. */
   accuracyLabel: string;
-  startSharing: () => Promise<void>;
+  /**
+   * Begins sharing. A duration in minutes ends it automatically; omitting one
+   * shares until it is switched off.
+   */
+  startSharing: (durationMinutes?: number | null) => Promise<void>;
+  /** When a timed window ends, or null when sharing has no end. */
+  expiresAt: number | null;
   pauseSharing: () => Promise<void>;
   stopSharing: () => Promise<void>;
   dismissProblem: () => void;
@@ -92,6 +98,7 @@ export function useLocation({
   const [problem, setProblem] = React.useState<LocationProblem | null>(null);
   const [pending, setPending] = React.useState(false);
   const [acquiring, setAcquiring] = React.useState(false);
+  const [expiresAt, setExpiresAt] = React.useState<number | null>(null);
 
   // Page visibility is external state, so it is subscribed to rather than
   // mirrored into a useState from an effect.
@@ -324,14 +331,24 @@ export function useLocation({
   /* ------------------------------------------------------------- controls -- */
 
   const applyState = React.useCallback(
-    async (next: LocationSharingState) => {
+    async (next: LocationSharingState, durationMinutes?: number | null) => {
       setPending(true);
       const previous = state;
       // Optimistic, so the switch responds instantly; reverted on failure.
       setState(next);
 
       try {
-        await api.patch(`/api/v1/families/${familyId}/sharing`, { state: next });
+        const result = await api.patch<{
+          sharing: { expiresAt: string | null };
+        }>(`/api/v1/families/${familyId}/sharing`, {
+          state: next,
+          // Only sent when asked for: an absent field leaves any existing
+          // window alone, which is what pausing and resuming should do.
+          ...(durationMinutes !== undefined ? { durationMinutes } : {}),
+        });
+
+        const ends = result.sharing.expiresAt;
+        setExpiresAt(ends ? new Date(ends).getTime() : null);
 
         if (next !== 'sharing') {
           throttleRef.current = { lastSentAt: null, lastPosition: null };
@@ -354,7 +371,7 @@ export function useLocation({
     [familyId, state],
   );
 
-  const startSharing = React.useCallback(async () => {
+  const startSharing = React.useCallback(async (durationMinutes?: number | null) => {
     if (permission === 'unsupported') {
       setProblem({
         kind: 'unavailable',
@@ -376,12 +393,12 @@ export function useLocation({
      * This is also what surfaces the permission prompt, so we never tell the
      * server we are sharing when the user is about to deny it.
      */
-    const outcome = await new Promise<'granted' | 'denied' | 'unavailable'>((resolve) => {
+    const outcome = await new Promise<'granted' | 'denied' | 'unavailable' | 'no-fix'>((resolve) => {
       const samples: Fix[] = [];
       let settled = false;
       let watchId: number | null = null;
 
-      const finish = (result: 'granted' | 'denied' | 'unavailable') => {
+      const finish = (result: 'granted' | 'denied' | 'unavailable' | 'no-fix') => {
         if (settled) return;
         settled = true;
         if (watchId !== null) navigator.geolocation.clearWatch(watchId);
@@ -400,7 +417,13 @@ export function useLocation({
         resolve(samples.length > 0 ? 'granted' : result);
       };
 
-      const timer = setTimeout(() => finish('granted'), ACQUISITION_WINDOW_MS);
+      /*
+       * The window elapsed. That is not the same as a grant: the prompt may
+       * still be open, or location services may be off with the browser never
+       * raising an error. Reported as its own outcome so the caller does not
+       * have to guess which of those happened.
+       */
+      const timer = setTimeout(() => finish('no-fix'), ACQUISITION_WINDOW_MS);
 
       watchId = navigator.geolocation.watchPosition(
         (position) => {
@@ -430,11 +453,37 @@ export function useLocation({
 
     if (outcome === 'denied') return;
 
-    setPermission('granted');
-    await applyState('sharing');
+    /*
+     * Only a fix proves the grant.
+     *
+     * This used to assert `granted` whenever the sampling window closed, which
+     * it does on a timeout with nothing collected — so a device with location
+     * services switched off, or a prompt the user had not answered yet, was
+     * recorded as having granted permission. The probe effect reports the real
+     * answer; leaving it alone is better than overwriting it with a guess.
+     */
+    if (outcome === 'granted') setPermission('granted');
+
+    await applyState('sharing', durationMinutes ?? null);
 
     // Send the acquired fix immediately so the family sees them straight away.
-    if (bestFixRef.current) void send(bestFixRef.current);
+    if (bestFixRef.current) {
+      void send(bestFixRef.current);
+      return;
+    }
+
+    /*
+     * Sharing is on, but nothing has been sent. The watch keeps trying, and
+     * the family correctly sees "no location" rather than a stale one — but
+     * silence here looks identical to success, so say which it is.
+     */
+    setProblem({
+      kind: 'timeout',
+      message:
+        outcome === 'unavailable'
+          ? "Sharing is on, but your device couldn't determine its location yet. This often improves outdoors."
+          : 'Sharing is on. Still waiting for your first location fix…',
+    });
   }, [permission, onError, applyState, send]);
 
   const pauseSharing = React.useCallback(() => applyState('paused'), [applyState]);
@@ -449,6 +498,7 @@ export function useLocation({
     backgroundLimited,
     pending,
     acquiring,
+    expiresAt,
     accuracyLabel: describeAccuracy(lastFix?.accuracy ?? null).label,
     startSharing,
     pauseSharing,

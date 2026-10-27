@@ -337,3 +337,134 @@ describe('own history', () => {
     await expectApiError(getOwnHistory(outsider.id, familyId, { from, to }), 404);
   });
 });
+
+/* ========================================================================== */
+
+/**
+ * Timed sharing.
+ *
+ * "Share where I am for the next hour" is the one shape of this feature a
+ * family safety app most needs, because it lets somebody say yes without
+ * saying yes forever. The service has enforced the window since it was
+ * written — on write here, and again on read so a lapsed window cannot keep
+ * showing a last known position — but the API schema omitted the field, so
+ * nothing could ever set one. These cover the path now that it is reachable.
+ */
+describe('timed sharing', () => {
+  /** Moves a member's window into the past without touching anything else. */
+  async function expireWindow(user: TestUser) {
+    await db
+      .update(familyMembers)
+      .set({ sharingExpiresAt: new Date(Date.now() - 60_000) })
+      .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, user.id)));
+  }
+
+  it('records when the window ends', async () => {
+    const settings = await updateSharingSettings(member.id, familyId, {
+      state: 'sharing',
+      durationMinutes: 60,
+    });
+
+    expect(settings.expiresAt).toBeInstanceOf(Date);
+    const minutes = (settings.expiresAt!.getTime() - Date.now()) / 60_000;
+    expect(minutes).toBeGreaterThan(58);
+    expect(minutes).toBeLessThan(61);
+  });
+
+  it('shares until switched off when no window is asked for', async () => {
+    const settings = await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+
+    expect(settings.expiresAt).toBeNull();
+  });
+
+  it('accepts positions while the window is open', async () => {
+    await updateSharingSettings(member.id, familyId, {
+      state: 'sharing',
+      durationMinutes: 60,
+    });
+
+    await expect(
+      recordLocation(member.id, {
+        familyId,
+        latitude: ACCRA.latitude,
+        longitude: ACCRA.longitude,
+        accuracy: 10,
+        recordedAt: new Date(),
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it('refuses positions once the window has lapsed', async () => {
+    await share(member);
+    await expireWindow(member);
+
+    await expectApiError(
+      recordLocation(member.id, {
+        familyId,
+        latitude: KUMASI.latitude,
+        longitude: KUMASI.longitude,
+        accuracy: 10,
+        recordedAt: new Date(),
+      }),
+      403,
+    );
+  });
+
+  /*
+   * The half that matters most. A lapsed window with a position still in the
+   * table would otherwise keep that position on the family's map for ever —
+   * breaking the exact promise the window was made to keep.
+   */
+  it('stops showing the last position once the window has lapsed', async () => {
+    await share(member);
+
+    const before = await getFamilyLocations(owner.id, familyId);
+    expect(before.locations.map((l) => l.userId)).toContain(member.id);
+
+    await expireWindow(member);
+
+    const after = await getFamilyLocations(owner.id, familyId);
+    expect(after.locations.map((l) => l.userId)).not.toContain(member.id);
+    expect(after.withheld.find((w) => w.userId === member.id)?.reason).toBe('not-sharing');
+  });
+
+  it('clears the window when sharing is switched off', async () => {
+    await updateSharingSettings(member.id, familyId, {
+      state: 'sharing',
+      durationMinutes: 60,
+    });
+
+    const off = await updateSharingSettings(member.id, familyId, { state: 'off' });
+    expect(off.expiresAt).toBeNull();
+
+    // Turning it back on must not resurrect the old window.
+    const on = await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    expect(on.expiresAt).toBeNull();
+  });
+
+  it('lets a window be cleared without switching sharing off', async () => {
+    await updateSharingSettings(member.id, familyId, {
+      state: 'sharing',
+      durationMinutes: 60,
+    });
+
+    const cleared = await updateSharingSettings(member.id, familyId, {
+      durationMinutes: null,
+    });
+
+    expect(cleared.expiresAt).toBeNull();
+    expect(cleared.state).toBe('sharing');
+  });
+
+  it('leaves an open window alone when pausing and resuming', async () => {
+    const started = await updateSharingSettings(member.id, familyId, {
+      state: 'sharing',
+      durationMinutes: 60,
+    });
+
+    await updateSharingSettings(member.id, familyId, { state: 'paused' });
+    const resumed = await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+
+    expect(resumed.expiresAt?.getTime()).toBe(started.expiresAt?.getTime());
+  });
+});
