@@ -7,6 +7,8 @@ import {
   timeAgo,
   STALE_AFTER_MS,
   VERY_STALE_AFTER_MS,
+  isBatteryCurrent,
+  BATTERY_STALE_AFTER_MS,
 } from '@/lib/time';
 
 /**
@@ -119,5 +121,67 @@ describe('callDuration', () => {
 
   it('accepts the ISO strings the client boundary hands it', () => {
     expect(callDuration('2026-08-27T12:00:00Z', '2026-08-27T12:00:30Z')).toBe('30s');
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Battery freshness.
+ *
+ * Battery only travels with a position, so it stops updating the moment
+ * sharing does. `battery_updated_at` was written from the first version and
+ * never read, which left every surface presenting a days-old percentage as the
+ * member's charge right now. "12%" beside somebody's name is the kind of thing
+ * a family acts on, so a wrong number is worse than no number.
+ */
+describe('isBatteryCurrent', () => {
+  const now = Date.UTC(2026, 10, 3, 12, 0, 0);
+  const minutesAgo = (n: number) => new Date(now - n * 60_000);
+
+  it('accepts a reading just taken', () => {
+    expect(isBatteryCurrent(minutesAgo(0), now)).toBe(true);
+    expect(isBatteryCurrent(minutesAgo(5), now)).toBe(true);
+  });
+
+  /* Longer than the location window: charge moves slowly, position does not. */
+  it('still accepts one from twenty minutes ago', () => {
+    expect(isBatteryCurrent(minutesAgo(20), now)).toBe(true);
+  });
+
+  it('refuses one past the window', () => {
+    expect(isBatteryCurrent(minutesAgo(31), now)).toBe(false);
+    expect(isBatteryCurrent(minutesAgo(60 * 24), now)).toBe(false);
+  });
+
+  it('treats the boundary as still current', () => {
+    expect(isBatteryCurrent(new Date(now - BATTERY_STALE_AFTER_MS), now)).toBe(true);
+    expect(isBatteryCurrent(new Date(now - BATTERY_STALE_AFTER_MS - 1), now)).toBe(false);
+  });
+
+  /* No reading at all is not a current reading. */
+  it('refuses nothing', () => {
+    expect(isBatteryCurrent(null, now)).toBe(false);
+    expect(isBatteryCurrent(undefined, now)).toBe(false);
+  });
+
+  it('reads an ISO string, which is what survives JSON', () => {
+    expect(isBatteryCurrent(minutesAgo(1).toISOString(), now)).toBe(true);
+    expect(isBatteryCurrent(minutesAgo(90).toISOString(), now)).toBe(false);
+  });
+
+  /*
+   * A future timestamp is not evidence of currency. Nothing should produce
+   * one, but a device with a skewed clock is exactly how a stale reading
+   * would otherwise pin itself as permanently fresh.
+   */
+  it('does not treat a future reading as fresh for ever', () => {
+    const wayAhead = new Date(now + 10 * 24 * 60 * 60 * 1000);
+
+    // It is "current" now, but only because it is ahead — it must not still
+    // be current once the clock has caught up and passed the window.
+    expect(isBatteryCurrent(wayAhead, wayAhead.getTime() + BATTERY_STALE_AFTER_MS + 1)).toBe(
+      false,
+    );
   });
 });

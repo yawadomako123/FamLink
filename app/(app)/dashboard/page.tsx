@@ -13,7 +13,7 @@ import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { listFamilyMembers } from '@/lib/families/queries';
 import { listRecentCalls } from '@/lib/calls/service';
-import { locationFreshness } from '@/lib/time';
+import { isBatteryCurrent, locationFreshness } from '@/lib/time';
 
 export const metadata: Metadata = { title: 'Home' };
 
@@ -134,12 +134,19 @@ export default async function DashboardPage() {
                     </div>
                   </div>
 
-                  {/* Battery is optional and absent until a client reports it. */}
-                  {member.batteryPercentage !== null && (
-                    <span className="text-xs text-muted tabular-nums">
-                      {member.batteryPercentage}%
-                    </span>
-                  )}
+                  {/*
+                    Optional, absent until a client reports it, and dropped
+                    once it goes stale. Battery only travels with a position,
+                    so it stops updating when sharing does — and a charge from
+                    yesterday shown without qualification simply reads as
+                    wrong.
+                  */}
+                  {member.batteryPercentage !== null &&
+                    isBatteryCurrent(member.batteryUpdatedAt) && (
+                      <span className="text-xs text-muted tabular-nums">
+                        {member.batteryPercentage}%
+                      </span>
+                    )}
                 </li>
               );
             })}

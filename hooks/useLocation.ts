@@ -111,6 +111,14 @@ export function useLocation({
   const bestFixRef = React.useRef<Fix | null>(null);
   // Guards against overlapping posts when fixes arrive faster than the network.
   const inFlightRef = React.useRef(false);
+  /** Set once a revocation has been persisted, so it is written only once. */
+  const revokedRef = React.useRef(false);
+  /*
+   * The permission listener is installed before `revoke` exists, and must not
+   * be torn down and rebuilt every time it changes identity — so it reaches
+   * it through a ref, the same way useRealtime holds its handler.
+   */
+  const revokeRef = React.useRef<(() => Promise<void>) | null>(null);
 
   /* ---------------------------------------------------------------- probe -- */
 
@@ -130,6 +138,12 @@ export function useLocation({
           message:
             'Location access was turned off in your browser settings. FamLink has stopped sharing your location.',
         });
+        /*
+         * Revoking from browser settings never reaches the watch — it simply
+         * stops producing fixes — so this listener is the only witness, and
+         * without it the server would keep the member down as sharing.
+         */
+        void revokeRef.current?.();
       }
     };
 
@@ -168,6 +182,69 @@ export function useLocation({
       status?.removeEventListener('change', onChange);
     };
   }, []);
+
+  const applyState = React.useCallback(
+    async (
+      next: LocationSharingState,
+      durationMinutes?: number | null,
+      reason?: 'chosen' | 'withdrawn',
+    ) => {
+      setPending(true);
+      const previous = state;
+      // Optimistic, so the switch responds instantly; reverted on failure.
+      setState(next);
+
+      try {
+        const result = await api.patch<{
+          sharing: { expiresAt: string | null };
+        }>(`/api/v1/families/${familyId}/sharing`, {
+          state: next,
+          // Only sent when asked for: an absent field leaves any existing
+          // window alone, which is what pausing and resuming should do.
+          ...(durationMinutes !== undefined ? { durationMinutes } : {}),
+          ...(reason ? { reason } : {}),
+        });
+
+        const ends = result.sharing.expiresAt;
+        setExpiresAt(ends ? new Date(ends).getTime() : null);
+
+        if (next !== 'sharing') {
+          throttleRef.current = { lastSentAt: null, lastPosition: null };
+          setLastSentAt(null);
+        }
+        setProblem(null);
+      } catch (error) {
+        setState(previous);
+        setProblem({
+          kind: 'network',
+          message:
+            error instanceof NetworkError
+              ? "We couldn't reach FamLink. Your sharing setting hasn't changed."
+              : 'We could not update your sharing setting. Please try again.',
+        });
+      } finally {
+        setPending(false);
+      }
+    },
+    [familyId, state],
+  );
+
+  /**
+   * Switches sharing off because the browser withdrew permission.
+   *
+   * Guarded, because the failing watch and the Permissions API listener both
+   * observe the same revocation and would otherwise each write it.
+   */
+  const revoke = React.useCallback(async () => {
+    if (revokedRef.current) return;
+    revokedRef.current = true;
+    // Recorded, not announced: the browser did this, not the member.
+    await applyState('off', undefined, 'withdrawn');
+  }, [applyState]);
+
+  React.useEffect(() => {
+    revokeRef.current = revoke;
+  }, [revoke]);
 
   /* ----------------------------------------------------------- send a fix -- */
 
@@ -274,7 +351,18 @@ export function useLocation({
     switch (error.code) {
       case error.PERMISSION_DENIED:
         setPermission('denied');
-        setState('off');
+        /*
+         * The server has to be told, not just React.
+         *
+         * This is the bug behind "I turned location on, left the app, and a
+         * day later it was off and asking permission again". Safari grants a
+         * website location for about a day and then takes it back, at which
+         * point the watch fails here. The old response set local state to
+         * 'off' and stopped — so the *server* still had this member down as
+         * sharing, for ever. Their family's map went on saying "Sharing
+         * location" above a position that only got older.
+         */
+        void revoke();
         setProblem({
           kind: 'permission-denied',
           message:
@@ -297,7 +385,7 @@ export function useLocation({
       default:
         setProblem({ kind: 'unavailable', message: 'Location is unavailable right now.' });
     }
-  }, []);
+  }, [revoke]);
 
   /* ------------------------------------------------------------- the watch -- */
 
@@ -330,46 +418,6 @@ export function useLocation({
 
   /* ------------------------------------------------------------- controls -- */
 
-  const applyState = React.useCallback(
-    async (next: LocationSharingState, durationMinutes?: number | null) => {
-      setPending(true);
-      const previous = state;
-      // Optimistic, so the switch responds instantly; reverted on failure.
-      setState(next);
-
-      try {
-        const result = await api.patch<{
-          sharing: { expiresAt: string | null };
-        }>(`/api/v1/families/${familyId}/sharing`, {
-          state: next,
-          // Only sent when asked for: an absent field leaves any existing
-          // window alone, which is what pausing and resuming should do.
-          ...(durationMinutes !== undefined ? { durationMinutes } : {}),
-        });
-
-        const ends = result.sharing.expiresAt;
-        setExpiresAt(ends ? new Date(ends).getTime() : null);
-
-        if (next !== 'sharing') {
-          throttleRef.current = { lastSentAt: null, lastPosition: null };
-          setLastSentAt(null);
-        }
-        setProblem(null);
-      } catch (error) {
-        setState(previous);
-        setProblem({
-          kind: 'network',
-          message:
-            error instanceof NetworkError
-              ? "We couldn't reach FamLink. Your sharing setting hasn't changed."
-              : 'We could not update your sharing setting. Please try again.',
-        });
-      } finally {
-        setPending(false);
-      }
-    },
-    [familyId, state],
-  );
 
   const startSharing = React.useCallback(async (durationMinutes?: number | null) => {
     if (permission === 'unsupported') {
@@ -462,7 +510,11 @@ export function useLocation({
      * recorded as having granted permission. The probe effect reports the real
      * answer; leaving it alone is better than overwriting it with a guess.
      */
-    if (outcome === 'granted') setPermission('granted');
+    if (outcome === 'granted') {
+      setPermission('granted');
+      // Permission was given again; a future revocation is a new event.
+      revokedRef.current = false;
+    }
 
     await applyState('sharing', durationMinutes ?? null);
 

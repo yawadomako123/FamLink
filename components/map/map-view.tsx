@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, EmptyState } from '@/components/ui/feedback';
 import { StatusDot, type PresenceStatus } from '@/components/ui/status-dot';
 import { useFamilyLocations } from '@/hooks/useFamilyLocations';
-import { locationFreshness, timeAgo } from '@/lib/time';
+import { isBatteryCurrent, locationFreshness, timeAgo } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import type { MemberLocation, WithheldReason } from '@/lib/location/types';
 import { isUsingFallbackStyle } from '@/lib/location/map-style';
@@ -264,7 +264,15 @@ function MemberRow({
           </div>
         </div>
 
-        {location.batteryPercentage !== null && (
+        {/*
+          Shown only while the reading is still current.
+          
+          Battery rides along with a position, so it stops updating when
+          sharing does. Without this the row kept showing whatever the charge
+          was the last time it was heard — days old, presented as now, and
+          "12%" beside somebody's name is the kind of thing a family acts on.
+        */}
+        {location.batteryPercentage !== null && isBatteryCurrent(location.batteryUpdatedAt) && (
           <span
             className={cn(
               'flex items-center gap-1 text-xs tabular-nums',
@@ -325,10 +333,16 @@ function MemberDetail({
 
             <p className="text-xs text-subtle mt-0.5">Updated {timeAgo(location.recordedAt)}</p>
 
-            {location.batteryPercentage !== null && (
+            {/*
+              The detail panel has room to qualify rather than hide, so a
+              reading that is no longer current is dated instead of dropped.
+            */}
+            {location.batteryPercentage !== null && location.batteryUpdatedAt && (
               <p className="text-xs text-subtle mt-0.5">
                 Battery {location.batteryPercentage}%
                 {location.isCharging ? ' · charging' : ''}
+                {!isBatteryCurrent(location.batteryUpdatedAt) &&
+                  ` · as of ${timeAgo(location.batteryUpdatedAt)}`}
               </p>
             )}
           </div>

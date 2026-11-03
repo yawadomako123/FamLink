@@ -468,3 +468,68 @@ describe('timed sharing', () => {
     expect(resumed.expiresAt?.getTime()).toBe(started.expiresAt?.getTime());
   });
 });
+
+/* ========================================================================== */
+
+describe('battery telemetry', () => {
+  it('carries when the reading was taken, not just the number', async () => {
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId,
+      latitude: ACCRA.latitude,
+      longitude: ACCRA.longitude,
+      accuracy: 10,
+      recordedAt: new Date(),
+      battery: { percentage: 72, isCharging: false },
+    });
+
+    const { locations } = await getFamilyLocations(owner.id, familyId);
+    const seen = locations.find((l) => l.userId === member.id);
+
+    expect(seen?.batteryPercentage).toBe(72);
+    /*
+     * The column was written from the first version and never read back, so
+     * every surface showed an old percentage as the member's charge now.
+     */
+    expect(seen?.batteryUpdatedAt).toBeInstanceOf(Date);
+  });
+
+  it('leaves the timestamp null when no device ever reported one', async () => {
+    await share(member);
+
+    const { locations } = await getFamilyLocations(owner.id, familyId);
+    const seen = locations.find((l) => l.userId === member.id);
+
+    expect(seen?.batteryPercentage).toBeNull();
+    expect(seen?.batteryUpdatedAt).toBeNull();
+  });
+
+  /*
+   * Safari and Firefox have no Battery Status API, so most positions arrive
+   * without one. An absent reading must not erase the last real one, or a
+   * single iPhone fix would wipe what an Android in the same family reported.
+   */
+  it('keeps the previous reading when a later fix carries none', async () => {
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId,
+      latitude: ACCRA.latitude,
+      longitude: ACCRA.longitude,
+      recordedAt: new Date(Date.now() - 60_000),
+      battery: { percentage: 55, isCharging: true },
+    });
+
+    await recordLocation(member.id, {
+      familyId,
+      latitude: KUMASI.latitude,
+      longitude: KUMASI.longitude,
+      recordedAt: new Date(),
+    });
+
+    const { locations } = await getFamilyLocations(owner.id, familyId);
+    const seen = locations.find((l) => l.userId === member.id);
+
+    expect(seen?.batteryPercentage).toBe(55);
+    expect(seen?.isCharging).toBe(true);
+  });
+});

@@ -123,6 +123,13 @@ export const updateSharingSchema = z
      * it before the service ever saw one. The whole feature was unreachable.
      */
     durationMinutes: sharingDurationSchema,
+    /*
+     * Only ever narrows what happens: a withdrawal records the change without
+     * announcing it. It cannot grant anything, so accepting it from the client
+     * is safe — the worst a forged value does is suppress one notification
+     * about the caller's own sharing.
+     */
+    reason: z.enum(['chosen', 'withdrawn']).optional(),
   })
   .refine(
     (v) =>

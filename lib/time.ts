@@ -8,6 +8,26 @@
 /** A location older than this is shown as "last seen", never as live. */
 export const STALE_AFTER_MS = 5 * 60 * 1000;
 
+/**
+ * A battery reading older than this is not shown.
+ *
+ * Longer than the location window because charge moves slowly — a reading from
+ * twenty minutes ago is still broadly true, where a position from twenty
+ * minutes ago may be a different part of town. Past this it is a souvenir, and
+ * a wrong number is worse than none: "12%" next to somebody's name is the kind
+ * of thing a family acts on.
+ */
+export const BATTERY_STALE_AFTER_MS = 30 * 60 * 1000;
+
+/** Whether a battery reading is recent enough to present as current. */
+export function isBatteryCurrent(
+  at: Date | string | number | null | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!at) return false;
+  return now - new Date(at).getTime() <= BATTERY_STALE_AFTER_MS;
+}
+
 /** Beyond this a location is old enough that we stop implying any currency. */
 export const VERY_STALE_AFTER_MS = 60 * 60 * 1000;
 

@@ -30,6 +30,8 @@ export interface MemberLocation {
   recordedAt: string;
   batteryPercentage: number | null;
   isCharging: boolean | null;
+  /** ISO 8601, or null if this member has never reported a battery level. */
+  batteryUpdatedAt: string | null;
 }
 
 export interface FamilyLocationsResponse {

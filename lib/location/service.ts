@@ -42,6 +42,15 @@ export interface MemberLocationRecord {
   recordedAt: Date;
   batteryPercentage: number | null;
   isCharging: boolean | null;
+  /**
+   * When the battery reading was taken.
+   *
+   * Carried so a caller can tell a current reading from a souvenir. Battery
+   * only rides along with a position, so it stops updating the moment sharing
+   * does — and the column was written from the start and never read, which
+   * left the map presenting a days-old percentage as the member's charge now.
+   */
+  batteryUpdatedAt: Date | null;
 }
 
 export interface FamilyLocationsResult {
@@ -273,6 +282,16 @@ export async function updateSharingSettings(
      * clears any existing window and shares until switched off.
      */
     durationMinutes?: number | null;
+    /**
+     * Why sharing is changing.
+     *
+     * `withdrawn` means the browser took location permission back rather than
+     * the member choosing to stop — Safari does this to a website after about
+     * a day. The state change is real and must be recorded, but it is not a
+     * decision anybody made, so the family is not told "they stopped sharing"
+     * at whatever hour the browser happened to do it.
+     */
+    reason?: 'chosen' | 'withdrawn';
   },
 ): Promise<SharingSettings> {
   await requireMembership(userId, familyId);
@@ -322,7 +341,10 @@ export async function updateSharingSettings(
    * announced: "I am now hidden from you" is not an announcement anyone should
    * be forced to make.
    */
-  if (changes.state === 'sharing' || changes.state === 'off') {
+  if (
+    (changes.state === 'sharing' || changes.state === 'off') &&
+    changes.reason !== 'withdrawn'
+  ) {
     const name = await displayName(userId).catch(() => 'A family member');
     await notifySharingChanged(familyId, userId, name, changes.state === 'sharing');
   }
@@ -383,6 +405,7 @@ export async function getFamilyLocations(
       sharingExpiresAt: familyMembers.sharingExpiresAt,
       batteryPercentage: familyMembers.batteryPercentage,
       isCharging: familyMembers.isCharging,
+      batteryUpdatedAt: familyMembers.batteryUpdatedAt,
     })
     .from(familyMembers)
     .innerJoin(users, eq(users.id, familyMembers.userId))
@@ -468,6 +491,7 @@ export async function getFamilyLocations(
       recordedAt: row.recordedAt,
       batteryPercentage: member.batteryPercentage,
       isCharging: member.isCharging,
+      batteryUpdatedAt: member.batteryUpdatedAt,
     });
   }
 
