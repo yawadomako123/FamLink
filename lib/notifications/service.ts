@@ -15,6 +15,7 @@ import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
 import { filterRecipients } from './preferences';
+import { recipientsForPlaceEvent } from '@/lib/places/watches';
 
 /**
  * Notifications.
@@ -257,6 +258,19 @@ export async function notifyPlaceEvent(
   type: 'arrived' | 'left',
   placeId: string,
 ): Promise<void> {
+  /*
+   * Narrowed to the members who want to hear about this place.
+   *
+   * Resolved here rather than left to notifyFamily's default fan-out, which
+   * is every member: with six places that buries the school run under the
+   * gym, and the only remedy used to be switching arrivals off altogether.
+   * Anybody who has set no filter is still included, so a family that never
+   * touches the screen is unaffected.
+   */
+  const recipientIds = await recipientsForPlaceEvent(familyId, placeId, actorId, type);
+
+  if (recipientIds.length === 0) return;
+
   await notifyFamily({
     familyId,
     type: type === 'arrived' ? 'ARRIVED_PLACE' : 'LEFT_PLACE',
@@ -267,6 +281,7 @@ export async function notifyPlaceEvent(
         : `${actorName} left ${placeName}.`,
     // A place id, not a position.
     data: { placeId, actorId },
+    recipientIds,
     exclude: actorId,
   });
 }

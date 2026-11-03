@@ -401,6 +401,42 @@ export const places = pgTable(
 );
 
 /**
+ * Which places a member wants to hear about.
+ *
+ * A filter, not a subscription. Arrivals and departures already notify the
+ * whole family, governed by one switch each in notification preferences — fine
+ * for a household with two places and unbearable with six, where the gym and
+ * the corner shop bury the one that matters. Rather than make people opt in to
+ * everything individually, a row here *narrows*: with none, a member hears
+ * about every place, exactly as before.
+ *
+ * Keyed by watcher and place, so each member chooses for themselves. Nobody
+ * can change what anybody else hears about.
+ */
+export const placeWatches = pgTable(
+  'place_watches',
+  {
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    placeId: uuid('place_id')
+      .notNull()
+      .references(() => places.id, { onDelete: 'cascade' }),
+    /** Denormalised so a member's filters can be read without joining places. */
+    familyId: uuid('family_id')
+      .notNull()
+      .references(() => families.id, { onDelete: 'cascade' }),
+    arrivals: boolean('arrivals').notNull().default(true),
+    departures: boolean('departures').notNull().default(true),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.userId, t.placeId] }),
+    index('place_watches_family_idx').on(t.familyId, t.placeId),
+  ],
+);
+
+/**
  * Tracks whether a member is currently inside each place, so a geofence
  * transition can be detected from one location update to the next. Without
  * this we would emit "arrived" on every single ping inside the radius.

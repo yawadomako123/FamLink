@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api/errors';
 import {
   acceptInvitation,
@@ -17,6 +17,11 @@ import { eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { memberPlaceStates } from '@/lib/db/schema';
 import { recordLocation, updateSharingSettings } from '@/lib/location/service';
+import {
+  listPlaceWatches,
+  recipientsForPlaceEvent,
+  setPlaceWatch,
+} from '@/lib/places/watches';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
 /**
@@ -326,5 +331,178 @@ describe('recording geofence transitions', () => {
 
     expect(afterLeaving?.isInside).toBe(false);
     expect(afterLeaving?.since.getTime()).toBeGreaterThan(onArrival!.since.getTime());
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Who hears about which places.
+ *
+ * Arrivals and departures notify the whole family, governed by one switch each
+ * in notification preferences. That is right for a household with two places
+ * and unbearable with six, where the gym buries the school run and the only
+ * remedy was switching arrivals off entirely.
+ *
+ * The rule these pin down is that a filter only ever *narrows*. A member who
+ * has set none hears about everything, exactly as before — without which this
+ * would have silenced every existing family the moment it shipped.
+ */
+describe('place notification filters', () => {
+  let elsewherePlace: string;
+
+  beforeEach(async () => {
+    const home = await createPlace(owner.id, familyId, { ...HOME, name: 'Home' });
+    elsewherePlace = home.id;
+  });
+
+  it('includes a member who has set no filter at all', async () => {
+    const recipients = await recipientsForPlaceEvent(
+      familyId,
+      elsewherePlace,
+      member.id,
+      'arrived',
+    );
+
+    expect(recipients).toContain(owner.id);
+  });
+
+  it('never includes the person who moved', async () => {
+    const recipients = await recipientsForPlaceEvent(
+      familyId,
+      elsewherePlace,
+      member.id,
+      'arrived',
+    );
+
+    expect(recipients).not.toContain(member.id);
+  });
+
+  it('drops somebody who switched arrivals off for this place', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: false });
+
+    const arriving = await recipientsForPlaceEvent(
+      familyId,
+      elsewherePlace,
+      member.id,
+      'arrived',
+    );
+    expect(arriving).not.toContain(owner.id);
+
+    // Departures were untouched, so those still reach them.
+    const leaving = await recipientsForPlaceEvent(familyId, elsewherePlace, member.id, 'left');
+    expect(leaving).toContain(owner.id);
+  });
+
+  it('drops somebody who switched departures off for this place', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { departures: false });
+
+    expect(
+      await recipientsForPlaceEvent(familyId, elsewherePlace, member.id, 'left'),
+    ).not.toContain(owner.id);
+    expect(
+      await recipientsForPlaceEvent(familyId, elsewherePlace, member.id, 'arrived'),
+    ).toContain(owner.id);
+  });
+
+  /* One member's choice must not change what anybody else is told. */
+  it('affects only the member who set it', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: false });
+
+    const recipients = await recipientsForPlaceEvent(
+      familyId,
+      elsewherePlace,
+      member.id,
+      'arrived',
+    );
+
+    expect(recipients).not.toContain(owner.id);
+    expect(recipients).toContain(other.id);
+  });
+
+  it('applies only to the place it was set on', async () => {
+    const gym = await createPlace(owner.id, familyId, { ...HOME, name: 'Gym' });
+    await setPlaceWatch(owner.id, familyId, gym.id, { arrivals: false });
+
+    expect(
+      await recipientsForPlaceEvent(familyId, elsewherePlace, member.id, 'arrived'),
+    ).toContain(owner.id);
+    expect(await recipientsForPlaceEvent(familyId, gym.id, member.id, 'arrived')).not.toContain(
+      owner.id,
+    );
+  });
+
+  it('can be turned back on', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: false });
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: true });
+
+    expect(
+      await recipientsForPlaceEvent(familyId, elsewherePlace, member.id, 'arrived'),
+    ).toContain(owner.id);
+  });
+
+  it('reports the caller’s own filters, and only those', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: false });
+
+    const mine = await listPlaceWatches(owner.id, familyId);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ placeId: elsewherePlace, arrivals: false });
+
+    // Somebody who has set none has none, rather than inheriting another's.
+    expect(await listPlaceWatches(member.id, familyId)).toHaveLength(0);
+  });
+
+  it('refuses a place belonging to another family', async () => {
+    const theirs = await createPlace(outsider.id, otherFamilyId, { ...HOME, name: 'Theirs' });
+
+    await expectApiError(setPlaceWatch(owner.id, familyId, theirs.id, { arrivals: false }), 404);
+  });
+
+  it('refuses a non-member', async () => {
+    await expectApiError(
+      setPlaceWatch(outsider.id, familyId, elsewherePlace, { arrivals: false }),
+      404,
+    );
+    await expectApiError(listPlaceWatches(outsider.id, familyId), 404);
+  });
+
+  it('goes away with the place it belongs to', async () => {
+    await setPlaceWatch(owner.id, familyId, elsewherePlace, { arrivals: false });
+    await deletePlace(owner.id, familyId, elsewherePlace);
+
+    expect(await listPlaceWatches(owner.id, familyId)).toHaveLength(0);
+  });
+
+  /*
+   * `notifyPlaceEvent` is called from `recordLocation` outside its try/catch,
+   * so a throw while reading filters would take the position down with it —
+   * the family would stop seeing somebody move because a notification
+   * preference table was unavailable. A deploy landing before its migration is
+   * the obvious way that happens.
+   */
+  it('notifies everyone rather than throwing if filters cannot be read', async () => {
+    const original = db.select;
+    let calls = 0;
+
+    // Fail only the filter read: the member lookup happens first.
+    const spy = vi.spyOn(db, 'select').mockImplementation(((...args: unknown[]) => {
+      calls += 1;
+      if (calls === 2) throw new Error('relation "place_watches" does not exist');
+      return (original as (...a: unknown[]) => unknown).apply(db, args);
+    }) as typeof db.select);
+
+    try {
+      const recipients = await recipientsForPlaceEvent(
+        familyId,
+        elsewherePlace,
+        member.id,
+        'arrived',
+      );
+
+      expect(recipients).toContain(owner.id);
+      expect(recipients).not.toContain(member.id);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -31,6 +31,7 @@ import {
 } from '@/lib/validation/places';
 import { cn } from '@/lib/utils';
 import type { Place } from '@/lib/db/schema';
+import { PlaceBell } from './place-bell';
 
 const PlacePickerMap = dynamic(
   () => import('./place-picker-map').then((m) => m.PlacePickerMap),
@@ -55,15 +56,26 @@ export function PlacesView({
   familyId,
   places,
   canEdit,
+  canMutePlaces,
+  mutedPlaceIds,
   suggestedCentre,
 }: {
   familyId: string;
   places: Place[];
   /** userId -> whether the viewer may edit that place. Computed server-side. */
   canEdit: Record<string, boolean>;
+  /**
+   * False when the filters could not be read — which is what the server
+   * reports if this ships ahead of its migration. The bells are hidden rather
+   * than offered as controls that cannot save.
+   */
+  canMutePlaces: boolean;
+  /** Places this viewer has switched notifications off for. */
+  mutedPlaceIds: string[];
   suggestedCentre: { latitude: number; longitude: number } | null;
 }) {
   const router = useRouter();
+  const muted = React.useMemo(() => new Set(mutedPlaceIds), [mutedPlaceIds]);
   const [editing, setEditing] = React.useState<Place | null>(null);
   const [creating, setCreating] = React.useState(false);
   const [pendingDelete, setPendingDelete] = React.useState<Place | null>(null);
@@ -140,6 +152,20 @@ export function PlacesView({
                       {place.radius}m radius
                     </p>
                   </div>
+
+                  {/*
+                    Available to every member, not only those who may edit:
+                    what you are notified about is yours to decide even for a
+                    place somebody else added.
+                  */}
+                  {canMutePlaces && (
+                    <PlaceBell
+                      familyId={familyId}
+                      placeId={place.id}
+                      placeName={place.name}
+                      initialMuted={muted.has(place.id)}
+                    />
+                  )}
 
                   {editable && (
                     <div className="flex items-center gap-0.5">

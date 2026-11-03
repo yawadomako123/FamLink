@@ -16,6 +16,10 @@ const TABLES = [
   'emergency_events',
   'place_events',
   'member_place_states',
+  // Named rather than left to CASCADE from places: the cascade clears it
+  // today, but a test that leaked notification filters between cases would
+  // fail somewhere far away from the cause.
+  'place_watches',
   'places',
   'notifications',
   'message_reads',
