@@ -13,7 +13,19 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
-export const requestFirebaseNotificationPermission = async () => {
+/**
+ * Registers this device for push, asking only if `prompt` allows it.
+ *
+ * The split matters. This used to prompt unconditionally, and was called two
+ * seconds after the app first loaded — before anybody had seen what FamLink
+ * was for. A browser remembers a refusal more or less permanently, so an
+ * unexplained prompt was the fastest way to lose push on that device for
+ * good, and push is how an SOS reaches a phone that is in somebody's pocket.
+ *
+ * On load the token is now only refreshed for a device that has *already*
+ * granted. Asking happens when somebody presses the button in settings.
+ */
+const getFcmToken = async (prompt: boolean): Promise<string | null> => {
   try {
     const supported = await isSupported();
     if (!supported) {
@@ -21,8 +33,18 @@ export const requestFirebaseNotificationPermission = async () => {
       return null;
     }
 
+    if (typeof Notification === 'undefined') return null;
+
+    // Nothing to gain from asking again, and the browser would not show it.
+    if (Notification.permission === 'denied') return null;
+    if (Notification.permission !== 'granted' && !prompt) return null;
+
     const messaging = getMessaging(app);
-    const permission = await Notification.requestPermission();
+    const permission =
+      Notification.permission === 'granted'
+        ? 'granted'
+        : await Notification.requestPermission();
+
     if (permission === 'granted') {
       const currentToken = await getToken(messaging, {
         vapidKey: process.env.NEXT_PUBLIC_FIREBASE_VAPID_KEY,
@@ -41,5 +63,40 @@ export const requestFirebaseNotificationPermission = async () => {
   }
   return null;
 };
+
+/**
+ * Sends the device's push token to the server.
+ *
+ * Shared by both callers so the endpoint and its failure handling live in one
+ * place rather than being repeated at each call site.
+ */
+async function saveToken(token: string): Promise<void> {
+  await fetch('/api/v1/fcm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, userAgent: navigator.userAgent }),
+  });
+}
+
+/** Refreshes the token for a device that has already granted. Never asks. */
+export async function syncExistingPushToken(): Promise<void> {
+  const token = await getFcmToken(false);
+  if (!token) return;
+
+  try {
+    await saveToken(token);
+  } catch (error) {
+    console.error('Failed to save FCM token to backend', error);
+  }
+}
+
+/** Asks for permission, then registers. Only ever from a deliberate action. */
+export async function registerForPush(): Promise<string | null> {
+  const token = await getFcmToken(true);
+  if (!token) return null;
+
+  await saveToken(token);
+  return token;
+}
 
 export { app };

@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Alert } from '@/components/ui/feedback';
 import { api, errorMessage } from '@/lib/api/client';
+import { EnableNotifications } from '@/components/pwa/enable-notifications';
 import { CallDiagnostic } from './call-diagnostic';
 import { cn } from '@/lib/utils';
 
@@ -142,6 +143,13 @@ export function SettingsView({
             </p>
           )}
         </CardHeader>
+
+        {/*
+          Above the per-family toggles, because none of them can deliver
+          anything until this device is allowed to receive notifications at
+          all — a toggle that silently does nothing is worse than no toggle.
+        */}
+        <EnableNotifications />
 
         {familyId ? (
           <ul className="divide-y divide-line border-t border-line">
