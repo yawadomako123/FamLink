@@ -204,7 +204,8 @@ export function SettingsView({
             <div className="flex-1">
               <CardTitle>Quiet hours</CardTitle>
               <p className="text-sm text-muted mt-1 leading-relaxed">
-                Silence routine alerts overnight. Emergency alerts still come through.
+                Silence routine alerts overnight. They&rsquo;ll still be waiting in Alerts
+                in the morning, and emergency alerts always come through.
               </p>
             </div>
             <Switch
@@ -222,21 +223,37 @@ export function SettingsView({
           </CardHeader>
 
           {quietHoursOn && (
-            <CardContent className="pt-0 flex items-center gap-3">
-              <Clock aria-hidden className="size-4 text-muted shrink-0" />
-              <TimeField
-                label="From"
-                value={preferences.quietHoursStart ?? 22 * 60}
-                onChange={(minutes) => void update({ quietHoursStart: minutes })}
-                disabled={saving}
-              />
-              <span className="text-sm text-muted">to</span>
-              <TimeField
-                label="To"
-                value={preferences.quietHoursEnd ?? 7 * 60}
-                onChange={(minutes) => void update({ quietHoursEnd: minutes })}
-                disabled={saving}
-              />
+            <CardContent className="pt-0 space-y-2.5">
+              <div className="flex items-center gap-3">
+                <Clock aria-hidden className="size-4 text-muted shrink-0" />
+                <TimeField
+                  label="From"
+                  value={preferences.quietHoursStart ?? 22 * 60}
+                  onChange={(minutes) => void update({ quietHoursStart: minutes })}
+                  disabled={saving}
+                />
+                <span className="text-sm text-muted">to</span>
+                <TimeField
+                  label="To"
+                  value={preferences.quietHoursEnd ?? 7 * 60}
+                  onChange={(minutes) => void update({ quietHoursEnd: minutes })}
+                  disabled={saving}
+                />
+              </div>
+
+              {/*
+                Two identical times are ignored rather than read as a window
+                that wraps the whole way round and silences everything. That is
+                the right call, but it leaves the switch reading "on" while
+                every alert still arrives — so say so, instead of letting
+                somebody find out by being woken up.
+              */}
+              {preferences.quietHoursStart === preferences.quietHoursEnd && (
+                <p className="text-xs text-on-tint-warn bg-tint-warn rounded-lg px-2.5 py-2 leading-relaxed">
+                  Both times are the same, so nothing is being silenced yet. Pick a
+                  different end time.
+                </p>
+              )}
             </CardContent>
           )}
         </Card>

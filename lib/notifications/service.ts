@@ -4,6 +4,7 @@ import { and, desc, eq, inArray, isNull, lt, ne, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
   familyMembers,
+  notificationPreferences,
   notifications,
   pushSubscriptions,
   users,
@@ -124,9 +125,23 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
 
     if (pushTo.length > 0) {
       const subs = await db
-        .select({ token: pushSubscriptions.token })
+        .select({ token: pushSubscriptions.token, userId: pushSubscriptions.userId })
         .from(pushSubscriptions)
         .where(inArray(pushSubscriptions.userId, pushTo));
+
+      /*
+       * Each person's quiet hours travel with their own push.
+       *
+       * They could not be applied here: quiet hours are a wall-clock window
+       * and the server does not know anybody's timezone, so 22:00 means
+       * nothing to it. The service worker does know — it runs on the device —
+       * so the window is sent and the decision made there.
+       *
+       * Sent per recipient rather than once for the whole family, because two
+       * people in one family sleep at different times.
+       */
+      const windows = await quietHoursFor(input.familyId, pushTo);
+      const silenceable = input.type !== 'SOS';
 
       // Push notifications are fired in the background
       Promise.allSettled(
@@ -135,7 +150,10 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
             sub.token,
             input.title,
             input.message,
-            input.data ? (input.data as Record<string, string>) : undefined,
+            {
+              ...(input.data ? (input.data as Record<string, string>) : {}),
+              ...quietHoursPayload(windows.get(sub.userId), silenceable),
+            },
             input.pushTag,
           ),
         ),
@@ -284,6 +302,59 @@ export async function notifyPlaceEvent(
     recipientIds,
     exclude: actorId,
   });
+}
+
+/**
+ * Each recipient's quiet-hours window, where they have set one.
+ *
+ * Read in one query rather than per token: a member may have several devices,
+ * and all of them share the window.
+ */
+async function quietHoursFor(
+  familyId: string,
+  userIds: string[],
+): Promise<Map<string, { start: number; end: number }>> {
+  const rows = await db
+    .select({
+      userId: notificationPreferences.userId,
+      start: notificationPreferences.quietHoursStart,
+      end: notificationPreferences.quietHoursEnd,
+    })
+    .from(notificationPreferences)
+    .where(
+      and(
+        eq(notificationPreferences.familyId, familyId),
+        inArray(notificationPreferences.userId, userIds),
+      ),
+    );
+
+  const out = new Map<string, { start: number; end: number }>();
+
+  for (const row of rows) {
+    // A window needs both ends, and one of zero length silences nothing.
+    if (row.start === null || row.end === null || row.start === row.end) continue;
+    out.set(row.userId, { start: row.start, end: row.end });
+  }
+
+  return out;
+}
+
+/**
+ * The quiet-hours fields a push carries.
+ *
+ * Strings because every value in an FCM data payload must be one. Absent
+ * entirely when there is no window, so the worker has nothing to evaluate.
+ */
+function quietHoursPayload(
+  window: { start: number; end: number } | undefined,
+  silenceable: boolean,
+): Record<string, string> {
+  if (!window || !silenceable) return {};
+
+  return {
+    quietStart: String(window.start),
+    quietEnd: String(window.end),
+  };
 }
 
 /** INTERNAL: fan-out helper. Callers reach it only from guarded paths. */

@@ -18,6 +18,26 @@ if (firebaseConfig.apiKey !== "REPLACE_WITH_YOUR_API_KEY") {
   firebase.initializeApp(firebaseConfig);
   const messaging = firebase.messaging();
 
+  /**
+   * Whether a wall-clock window covers this moment, on this device.
+   *
+   * Quiet hours cannot be applied on the server: it is a wall-clock window and
+   * the server knows nobody's timezone, so 22:00 means nothing to it. Here it
+   * does — this runs on the device — so the window travels in the payload and
+   * the decision is made against local time.
+   *
+   * A window like 22:00-07:00 wraps past midnight, so both orderings are
+   * handled rather than assuming start < end.
+   */
+  const inQuietHours = (startMinutes, endMinutes) => {
+    const now = new Date();
+    const minutes = now.getHours() * 60 + now.getMinutes();
+
+    return startMinutes < endMinutes
+      ? minutes >= startMinutes && minutes < endMinutes
+      : minutes >= startMinutes || minutes < endMinutes;
+  };
+
   /*
    * The single author of anything the user sees.
    *
@@ -31,6 +51,27 @@ if (firebaseConfig.apiKey !== "REPLACE_WITH_YOUR_API_KEY") {
    */
   messaging.onBackgroundMessage((payload) => {
     const data = payload.data || {};
+
+    /*
+     * Quiet hours suppress the interruption, not the record. The in-app
+     * notification was written server-side either way, so it is waiting in
+     * Alerts in the morning — this only declines to wake somebody for it.
+     *
+     * These fields are absent entirely for an SOS, which is why no exception
+     * is needed here: an emergency is never silenceable, so it never carries a
+     * window to be silenced by.
+     */
+    const quietStart = Number(data.quietStart);
+    const quietEnd = Number(data.quietEnd);
+
+    if (
+      Number.isFinite(quietStart) &&
+      Number.isFinite(quietEnd) &&
+      inQuietHours(quietStart, quietEnd)
+    ) {
+      return;
+    }
+
     const notificationTitle = data.title || payload.notification?.title || 'FamLink';
     const notificationOptions = {
       body: data.body || payload.notification?.body || '',

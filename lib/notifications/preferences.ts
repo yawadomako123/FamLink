@@ -153,10 +153,12 @@ export function inQuietHours(
 /**
  * Filters a recipient list down to those who want this notification.
  *
- * Quiet hours are not applied here: the server does not know each recipient's
- * timezone, and guessing would silence alerts at the wrong times. They are
- * applied client-side when deciding whether to raise a browser notification,
- * where local time is actually known.
+ * Quiet hours are deliberately not applied here: the server does not know
+ * each recipient's timezone, and guessing would silence alerts at the wrong
+ * times. Each recipient's window instead travels in their own push payload —
+ * see `quietHoursFor` in ./service.ts — and the service worker decides, on the
+ * device, where local time is actually known. The in-app notification is
+ * recorded either way, so a suppressed push is still waiting in Alerts.
  */
 export async function filterRecipients(
   familyId: string,

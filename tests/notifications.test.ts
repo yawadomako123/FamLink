@@ -20,7 +20,33 @@ import {
   resolveSos,
   triggerSos,
 } from '@/lib/notifications/emergency';
+import { pushSubscriptions } from '@/lib/db/schema';
+import { updatePreferences } from '@/lib/notifications/preferences';
+import { sendPushNotification } from '@/lib/firebase/server';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
+
+/*
+ * Pushes are intercepted rather than sent. What goes into the payload is the
+ * whole point of the quiet-hours tests below — the decision is made on the
+ * device, so the server's only job is to put the right window in the right
+ * person's message, and that is only observable here.
+ */
+vi.mock('@/lib/firebase/server', () => ({
+  adminMessaging: null,
+  sendPushNotification: vi.fn(async () => true),
+}));
+
+const pushMock = vi.mocked(sendPushNotification);
+
+/** The data payload of the push sent to one member's device. */
+function payloadFor(token: string): Record<string, string> | undefined {
+  const call = pushMock.mock.calls.find(([sentTo]) => sentTo === token);
+  return call?.[3];
+}
+
+async function registerDevice(userId: string, token: string) {
+  await db.insert(pushSubscriptions).values({ userId, token });
+}
 
 async function expectApiError(promise: Promise<unknown>, status: number, code?: string) {
   try {
@@ -53,6 +79,7 @@ beforeEach(async () => {
     expiresInHours: 24,
   });
   await acceptInvitation(member.id, invite.code);
+  pushMock.mockClear();
 });
 
 afterAll(async () => {
@@ -359,5 +386,140 @@ describe('SOS when the name cannot be looked up', () => {
 
     const notes = await listNotifications(owner.id, familyId);
     expect(notes.some((n) => n.title === 'False alarm')).toBe(true);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Quiet hours in the payload.
+ *
+ * The server cannot apply quiet hours — it does not know anybody's timezone,
+ * so 22:00 means nothing to it. Each recipient's window therefore rides along
+ * in their own push and the service worker decides, where local time is known.
+ *
+ * These guard the half that the worker cannot: that the right window reaches
+ * the right person, and that an emergency never carries one at all.
+ */
+describe('quiet hours travel with the push', () => {
+  it('sends a member their own window', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+    await updatePreferences(owner.id, familyId, {
+      quietHoursStart: 22 * 60,
+      quietHoursEnd: 7 * 60,
+    });
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Kofi arrived',
+      message: 'Kofi arrived at School.',
+      exclude: member.id,
+    });
+
+    expect(payloadFor('tok-owner')).toMatchObject({
+      quietStart: String(22 * 60),
+      quietEnd: String(7 * 60),
+    });
+  });
+
+  it('gives each member their own, because a family does not sleep together', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+    await registerDevice(member.id, 'tok-member');
+
+    await updatePreferences(owner.id, familyId, {
+      quietHoursStart: 22 * 60,
+      quietHoursEnd: 7 * 60,
+    });
+    // A teenager and a grandparent do not want the same window, and sending
+    // one window for the whole family would have silenced the wrong person.
+    await updatePreferences(member.id, familyId, {
+      quietHoursStart: 1 * 60,
+      quietHoursEnd: 9 * 60,
+    });
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Somebody arrived',
+      message: 'Somebody arrived at School.',
+    });
+
+    expect(payloadFor('tok-owner')?.quietStart).toBe(String(22 * 60));
+    expect(payloadFor('tok-member')?.quietStart).toBe(String(1 * 60));
+  });
+
+  it('sends nothing to evaluate when no window is set', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Kofi arrived',
+      message: 'Kofi arrived at School.',
+      exclude: member.id,
+    });
+
+    const payload = payloadFor('tok-owner');
+    expect(payload).toBeDefined();
+    expect(payload?.quietStart).toBeUndefined();
+    expect(payload?.quietEnd).toBeUndefined();
+  });
+
+  it('ignores a window of zero length', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+    // The shape a slider lands on mid-drag. Read as a wrap by the worker it
+    // would cover the whole day and silence the member completely.
+    await updatePreferences(owner.id, familyId, {
+      quietHoursStart: 22 * 60,
+      quietHoursEnd: 22 * 60,
+    });
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Kofi arrived',
+      message: 'Kofi arrived at School.',
+      exclude: member.id,
+    });
+
+    expect(payloadFor('tok-owner')?.quietStart).toBeUndefined();
+  });
+
+  it('never attaches a window to an SOS', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+    await updatePreferences(owner.id, familyId, {
+      quietHoursStart: 0,
+      quietHoursEnd: 23 * 60 + 59,
+    });
+
+    // The member has effectively silenced the entire day. An emergency must
+    // still ring: it carries no window, so the worker has nothing to act on.
+    await triggerSos(member.id, { familyId });
+
+    const payload = payloadFor('tok-owner');
+    expect(payload).toBeDefined();
+    expect(payload?.quietStart).toBeUndefined();
+    expect(payload?.quietEnd).toBeUndefined();
+  });
+
+  it('still delivers the in-app notification to a member inside their window', async () => {
+    await registerDevice(owner.id, 'tok-owner');
+    await updatePreferences(owner.id, familyId, {
+      quietHoursStart: 0,
+      quietHoursEnd: 23 * 60 + 59,
+    });
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Kofi arrived',
+      message: 'Kofi arrived at School.',
+      exclude: member.id,
+    });
+
+    // Quiet hours suppress the interruption, not the record. The alert is
+    // waiting in the morning rather than lost.
+    expect(await countUnread(owner.id, familyId)).toBe(1);
   });
 });
