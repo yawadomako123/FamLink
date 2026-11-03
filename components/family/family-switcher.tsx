@@ -7,6 +7,7 @@ import { Check, ChevronsUpDown, Loader2, Plus } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api/client';
 import { cn } from '@/lib/utils';
 import type { FamilySummary } from '@/lib/families/queries';
+import type { FamilyWithUnread } from '@/lib/families/shell';
 
 /**
  * Switches which family the app is showing.
@@ -61,7 +62,7 @@ export function FamilySwitcher({
   variant = 'sidebar',
 }: {
   current: FamilySummary;
-  families: FamilySummary[];
+  families: FamilyWithUnread[];
   className?: string;
   /**
    * `sidebar` stacks a label above the name and fills its column. `compact` is
@@ -204,7 +205,15 @@ export function FamilySwitcher({
                 {isSwitching ? (
                   <Loader2 aria-hidden className="size-4 animate-spin text-muted" />
                 ) : (
-                  isCurrent && <Check aria-hidden className="size-4 text-on-tint-brand" />
+                  <>
+                    {/*
+                      Only for the families you are not looking at. The current
+                      one already has these counts on its own nav items, and
+                      repeating them here would just be louder.
+                    */}
+                    {!isCurrent && <UnreadBadge family={family} />}
+                    {isCurrent && <Check aria-hidden className="size-4 text-on-tint-brand" />}
+                  </>
                 )}
               </button>
             );
@@ -223,5 +232,51 @@ export function FamilySwitcher({
         </div>
       )}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * What is waiting in a family you are not currently looking at.
+ *
+ * Alerts outrank messages and are coloured differently, because the set of
+ * things that produce an alert includes an SOS. Previously neither was shown
+ * at all: the switcher listed names, member counts and roles, so an emergency
+ * raised in your other family stayed invisible until you happened to switch
+ * into it.
+ *
+ * Counts are capped in the label rather than the query — "9+" is as much as a
+ * badge this size can say, and the exact number past that changes nothing
+ * about what the person does next.
+ */
+function UnreadBadge({ family }: { family: FamilyWithUnread }) {
+  const { unreadAlerts, unreadMessages } = family;
+
+  if (unreadAlerts === 0 && unreadMessages === 0) return null;
+
+  // One badge, not two. Alerts win the colour when there are any.
+  const count = unreadAlerts > 0 ? unreadAlerts : unreadMessages;
+  const kind = unreadAlerts > 0 ? 'alert' : 'message';
+
+  const label =
+    unreadAlerts > 0
+      ? `${unreadAlerts} unread ${unreadAlerts === 1 ? 'alert' : 'alerts'}`
+      : `${unreadMessages} unread ${unreadMessages === 1 ? 'message' : 'messages'}`;
+
+  return (
+    <span
+      aria-label={label}
+      title={label}
+      className={cn(
+        'shrink-0 min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold',
+        'flex items-center justify-center tabular-nums',
+        kind === 'alert'
+          ? 'bg-danger-600 text-white'
+          : 'bg-tint-brand text-on-tint-brand',
+      )}
+    >
+      {count > 9 ? '9+' : count}
+    </span>
   );
 }

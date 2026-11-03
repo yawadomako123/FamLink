@@ -211,12 +211,25 @@ export async function countUnread(userId: string, familyId: string): Promise<num
   );
 }
 
-/** Unread counts across every family the user belongs to, in one query. */
-export async function countUnreadAllFamilies(userId: string): Promise<number> {
-  return db.$count(
-    notifications,
-    and(eq(notifications.userId, userId), isNull(notifications.readAt)),
-  );
+/**
+ * Unread alert counts for every family the user belongs to, in one query.
+ *
+ * Per family rather than one total, for the same reason as its chat
+ * counterpart: the switcher needs to know *which* family is waiting on you.
+ * An SOS raised in a family you are not currently looking at was invisible
+ * until you happened to switch to it, which for an emergency alert is the
+ * worst place to hide something.
+ *
+ * Families with nothing unread are absent rather than zero.
+ */
+export async function countUnreadByFamily(userId: string): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ familyId: notifications.familyId, count: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+    .groupBy(notifications.familyId);
+
+  return new Map(rows.map((r) => [r.familyId, r.count]));
 }
 
 export async function markRead(

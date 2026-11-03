@@ -8,6 +8,7 @@ import { FamilySwitcher } from '@/components/family/family-switcher';
 import { Logo } from './logo';
 import { cn } from '@/lib/utils';
 import type { FamilySummary } from '@/lib/families/queries';
+import type { FamilyWithUnread } from '@/lib/families/shell';
 
 export interface TopBarUser {
   id: string;
@@ -38,7 +39,7 @@ export function TopBar({
   onSignOut: () => void;
   right?: React.ReactNode;
   family?: FamilySummary | undefined;
-  families?: FamilySummary[];
+  families?: FamilyWithUnread[];
 }) {
   const [open, setOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);

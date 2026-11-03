@@ -11,6 +11,7 @@ import { FirebaseToken } from '@/components/pwa/firebase-token';
 import { CallManager } from '@/components/calls/call-manager';
 import { BadgeRefresh } from './badge-refresh';
 import type { FamilySummary } from '@/lib/families/queries';
+import type { FamilyWithUnread } from '@/lib/families/shell';
 import { cn } from '@/lib/utils';
 
 export interface AppShellProps {
@@ -18,7 +19,7 @@ export interface AppShellProps {
   familyName?: string | undefined;
   /** Supplied when in a family; enables the switcher. */
   family?: FamilySummary | undefined;
-  families?: FamilySummary[];
+  families?: FamilyWithUnread[];
   title?: string | undefined;
   alertCount?: number;
   unreadMessages?: number;

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { Logo } from './logo';
 import { FamilySwitcher } from '@/components/family/family-switcher';
 import type { FamilySummary } from '@/lib/families/queries';
+import type { FamilyWithUnread } from '@/lib/families/shell';
 
 /**
  * Desktop navigation rail. The primary items sit above a divider, with the
@@ -22,7 +23,7 @@ export function Sidebar({
 }: {
   familyName?: string | undefined;
   family?: FamilySummary | undefined;
-  families?: FamilySummary[];
+  families?: FamilyWithUnread[];
   alertCount?: number;
   unreadMessages?: number;
 }) {

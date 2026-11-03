@@ -34,6 +34,7 @@ import { api, errorMessage } from '@/lib/api/client';
 import { timeAgo } from '@/lib/time';
 import { cn } from '@/lib/utils';
 import type { FamilyMemberView, FamilySummary, InvitationView } from '@/lib/families/queries';
+import type { FamilyWithUnread } from '@/lib/families/shell';
 import type { FamilyRole } from '@/lib/db/schema';
 
 const ROLE_LABEL: Record<FamilyRole, string> = {
@@ -57,7 +58,7 @@ export function FamilyView({
   viewerId,
 }: {
   family: FamilySummary;
-  families: FamilySummary[];
+  families: FamilyWithUnread[];
   members: FamilyMemberView[];
   invitations: InvitationView[];
   viewerId: string;
@@ -351,7 +352,7 @@ function YourFamilies({
   families,
   currentId,
 }: {
-  families: FamilySummary[];
+  families: FamilyWithUnread[];
   currentId: string;
 }) {
   const { switchTo, switchingTo, error } = useFamilySwitch();

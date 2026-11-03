@@ -530,10 +530,21 @@ export async function countUnreadMessages(
   return db.$count(messages, and(...conditions));
 }
 
-/** Unread counts for every family the user belongs to, in one query. */
-export async function countUnreadMessagesAllFamilies(userId: string): Promise<number> {
+/**
+ * Unread message counts for every family the user belongs to, in one query.
+ *
+ * Per family rather than one total. A total could not answer the question the
+ * family switcher asks — *which* of your families has something waiting — and
+ * that was the shape this function had while nothing called it.
+ *
+ * Families with nothing unread are absent rather than zero, so a caller can
+ * `get() ?? 0` and never iterate a map of noughts.
+ */
+export async function countUnreadMessagesByFamily(
+  userId: string,
+): Promise<Map<string, number>> {
   const rows = await db
-    .select({ count: sql<number>`count(*)::int` })
+    .select({ familyId: messages.familyId, count: sql<number>`count(*)::int` })
     .from(messages)
     .innerJoin(
       familyMembers,
@@ -555,7 +566,8 @@ export async function countUnreadMessagesAllFamilies(userId: string): Promise<nu
         isNull(messages.deletedAt),
         sql`(${messageReads.lastReadAt} is null or ${messages.createdAt} > ${messageReads.lastReadAt})`,
       ),
-    );
+    )
+    .groupBy(messages.familyId);
 
-  return rows[0]?.count ?? 0;
+  return new Map(rows.map((r) => [r.familyId, r.count]));
 }
