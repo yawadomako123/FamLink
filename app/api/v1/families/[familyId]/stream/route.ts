@@ -97,9 +97,22 @@ export async function GET(
       send(': connected\n\n');
 
       try {
-        unsubscribe = await subscribeToFamily(familyId, (event: RealtimeEvent) => {
-          send(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
-        });
+        unsubscribe = await subscribeToFamily(
+          familyId,
+          (event: RealtimeEvent) => {
+            send(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+          },
+          () => {
+            /*
+             * The shared LISTEN connection went away. Close rather than sit
+             * here looking healthy while nothing arrives — the browser
+             * reconnects on its own, and reconnecting is what brings LISTEN
+             * back up.
+             */
+            send('event: cycle\ndata: {}\n\n');
+            shutdown();
+          },
+        );
       } catch (error) {
         console.error('[stream] could not subscribe', error);
         // Tell the client to fall back to polling rather than retrying a

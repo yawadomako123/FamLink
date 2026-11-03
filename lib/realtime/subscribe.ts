@@ -24,10 +24,15 @@ import { REALTIME_CHANNEL, isRealtimeEvent, type RealtimeEvent } from './events'
 
 type Subscriber = (event: RealtimeEvent) => void;
 
+/** Called when the LISTEN connection drops, so a stream can close itself. */
+type LostHandler = () => void;
+
 interface Hub {
   client: Client | null;
   connecting: Promise<void> | null;
   subscribers: Set<Subscriber>;
+  /** Parallel to `subscribers`; keyed by the same filtered function. */
+  lost: Map<Subscriber, LostHandler>;
 }
 
 // Cached on globalThis so Next's dev-mode module reloading cannot leak
@@ -38,6 +43,7 @@ const hub: Hub = globalForHub.__famlinkHub ?? {
   client: null,
   connecting: null,
   subscribers: new Set(),
+  lost: new Map(),
 };
 
 if (process.env.NODE_ENV !== 'production') {
@@ -79,16 +85,49 @@ async function ensureConnected(): Promise<void> {
       }
     });
 
+    /*
+     * A dropped LISTEN used to be silent to everybody already connected.
+     *
+     * The client was nulled so the *next* subscriber would reconnect, but
+     * every stream already open kept its HTTP connection — healthy, reporting
+     * live, and receiving nothing, because the Postgres end of it was gone.
+     * Streams cycle every four minutes, so it recovered on its own, but four
+     * minutes of a realtime channel that carries incoming calls is a long
+     * time to be quietly dead.
+     *
+     * Dropping the connection now tells every subscriber, so each stream
+     * closes and its browser reconnects immediately — which is also what
+     * brings the LISTEN back up.
+     */
+    const drop = (reason: string) => {
+      if (hub.client !== client) return;
+      hub.client = null;
+
+      const handlers = [...hub.lost.values()];
+      hub.subscribers.clear();
+      hub.lost.clear();
+
+      if (handlers.length > 0) {
+        console.warn(`[realtime] ${reason}; closing ${handlers.length} stream(s) to reconnect`);
+      }
+
+      for (const onLost of handlers) {
+        try {
+          onLost();
+        } catch (error) {
+          console.error('[realtime] lost handler threw', error);
+        }
+      }
+
+      void client.end().catch(() => {});
+    };
+
     client.on('error', (error) => {
       console.error('[realtime] listen connection error', error.message);
-      // Drop the client so the next subscriber reconnects rather than
-      // attaching to a dead socket.
-      hub.client = null;
+      drop('listen connection errored');
     });
 
-    client.on('end', () => {
-      hub.client = null;
-    });
+    client.on('end', () => drop('listen connection ended'));
 
     await client.connect();
     await client.query(`LISTEN ${REALTIME_CHANNEL}`);
@@ -129,22 +168,30 @@ async function disconnectIfIdle(): Promise<void> {
 export async function subscribeToFamily(
   familyId: string,
   onEvent: Subscriber,
+  /**
+   * Invoked if the shared LISTEN connection drops. The stream should close so
+   * the browser reconnects, which is what re-establishes the subscription.
+   */
+  onLost?: LostHandler,
 ): Promise<() => void> {
   const filtered: Subscriber = (event) => {
     if (event.familyId === familyId) onEvent(event);
   };
 
   hub.subscribers.add(filtered);
+  if (onLost) hub.lost.set(filtered, onLost);
 
   try {
     await ensureConnected();
   } catch (error) {
     hub.subscribers.delete(filtered);
+    hub.lost.delete(filtered);
     throw error;
   }
 
   return () => {
     hub.subscribers.delete(filtered);
+    hub.lost.delete(filtered);
     void disconnectIfIdle();
   };
 }
