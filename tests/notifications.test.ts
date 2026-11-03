@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { ApiError } from '@/lib/api/errors';
 import { db } from '@/lib/db';
@@ -264,5 +264,100 @@ describe('SOS', () => {
     await resolveSos(owner.id, familyId, event.id);
 
     await expectApiError(resolveSos(member.id, familyId, event.id), 404);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * An SOS must survive a bad moment in the database.
+ *
+ * `displayName` throws if the user row is missing and on any transient error,
+ * and it sits between recording the emergency and telling anybody about it.
+ * Unguarded, a hiccup on that one query left the alert stored as active with
+ * nobody notified, no realtime hint, and a 500 returned to somebody who had
+ * just pressed SOS and now had no way to know whether help was coming.
+ *
+ * Eleven other callers across calls, check-ins and location already guarded
+ * it. This path was the exception, in the one place the consequence is worst.
+ */
+describe('SOS when the name cannot be looked up', () => {
+  /** Fails only the name lookup; the insert before it still succeeds. */
+  function breakNameLookup() {
+    const original = db.select.bind(db);
+    let calls = 0;
+
+    return vi.spyOn(db, 'select').mockImplementation(((...args: unknown[]) => {
+      calls += 1;
+      /*
+       * The second select, not the first. `requireMembership` queries first in
+       * all three of these functions; the name lookup is the one after it.
+       */
+      if (calls === 2) throw new Error('connection terminated unexpectedly');
+      return (original as (...a: unknown[]) => unknown)(...args);
+    }) as typeof db.select);
+  }
+
+  it('still raises the alarm, and still tells the family', async () => {
+    const spy = breakNameLookup();
+
+    try {
+      const event = await triggerSos(member.id, { familyId, latitude: 5.6, longitude: -0.18 });
+      expect(event.status).toBe('active');
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The family heard about it, which is the entire point of the feature.
+    const forOwner = await listNotifications(owner.id, familyId);
+    expect(forOwner.some((n) => n.type === 'SOS')).toBe(true);
+
+    // And it is still on record as live.
+    const active = await listActiveEmergencies(owner.id, familyId);
+    expect(active).toHaveLength(1);
+  });
+
+  it('names them generically rather than failing', async () => {
+    const spy = breakNameLookup();
+
+    try {
+      await triggerSos(member.id, { familyId });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const [alert] = await listNotifications(owner.id, familyId);
+    expect(alert?.message.length).toBeGreaterThan(0);
+    // A placeholder is acceptable; a missing alert is not.
+    expect(alert?.title).toContain('needs help');
+  });
+
+  it('still tells the family when an emergency is resolved', async () => {
+    const event = await triggerSos(member.id, { familyId });
+    await markRead(owner.id, familyId);
+
+    const spy = breakNameLookup();
+    try {
+      await resolveSos(owner.id, familyId, event.id);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const notes = await listNotifications(member.id, familyId);
+    expect(notes.some((n) => n.title === 'Emergency resolved')).toBe(true);
+  });
+
+  it('still tells the family when an alert was a false alarm', async () => {
+    const event = await triggerSos(member.id, { familyId });
+
+    const spy = breakNameLookup();
+    try {
+      await cancelSos(member.id, familyId, event.id);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const notes = await listNotifications(owner.id, familyId);
+    expect(notes.some((n) => n.title === 'False alarm')).toBe(true);
   });
 });

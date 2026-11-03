@@ -65,7 +65,20 @@ export async function triggerSos(
 
   if (!event) throw Errors.internal();
 
-  const name = await displayName(userId);
+  /*
+   * A name we cannot look up must never cost somebody their alarm.
+   *
+   * `displayName` throws if the row is missing and on any transient database
+   * error, and it sits between recording the emergency and telling anyone
+   * about it. Unguarded, a hiccup on that one query left the alert stored as
+   * active, nobody notified, no realtime hint, and a 500 returned to somebody
+   * who had just pressed SOS and now had no idea whether help was coming.
+   *
+   * Every other caller in the codebase already guards it this way — eleven of
+   * them, across calls, check-ins and location. This file was the exception,
+   * in the one place where the consequence is worst.
+   */
+  const name = await displayName(userId).catch(() => 'A family member');
   const hasLocation = input.latitude != null && input.longitude != null;
 
   await notifyFamily({
@@ -119,7 +132,9 @@ export async function resolveSos(
 
   if (!updated) throw Errors.notFound('That alert');
 
-  const name = await displayName(userId);
+  // Guarded for the same reason as triggerSos: a family waiting to hear that
+  // an emergency is over should not be left waiting by a failed name lookup.
+  const name = await displayName(userId).catch(() => 'A family member');
 
   await notifyFamily({
     familyId,
@@ -159,7 +174,8 @@ export async function cancelSos(
 
   if (!updated) throw Errors.notFound('That alert');
 
-  const name = await displayName(userId);
+  // As above: a false alarm nobody is told about leaves a family still afraid.
+  const name = await displayName(userId).catch(() => 'A family member');
 
   await notifyFamily({
     familyId,
