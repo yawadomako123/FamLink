@@ -13,6 +13,7 @@ import {
   endCall,
   getActiveCall,
   joinCall,
+  listRecentCalls,
   pollSignals,
   sendSignal,
   startCall,
@@ -517,5 +518,135 @@ describe('camera constraints', () => {
       expect(c.width).toEqual({ ideal: 1280, max: 1920 });
       expect(c.frameRate).toEqual({ ideal: 24, max: 30 });
     }
+  });
+});
+
+/* ========================================================================== */
+
+/** Drags a call's start time back so it is past the ring timeout. */
+async function ageOutRinging(callId: string) {
+  await db
+    .update(calls)
+    .set({ startedAt: new Date(Date.now() - 10 * 60_000) })
+    .where(eq(calls.id, callId));
+}
+
+async function statusOf(callId: string) {
+  const [row] = await db
+    .select({ status: calls.status })
+    .from(calls)
+    .where(eq(calls.id, callId))
+    .limit(1);
+
+  return row?.status;
+}
+
+/**
+ * Calls nobody answers.
+ *
+ * Retiring was done to one call only — whichever `getActiveCall` picked, which
+ * is the newest ringing or active one for that member. An older ringing call
+ * was never reached, and that is not cosmetic: history lists `ended`, `missed`
+ * and `declined`, so a row stuck at `ringing` does not show up as a missed
+ * call, it does not show up at all. Somebody rang, nobody answered, and
+ * neither party was ever told.
+ */
+describe('a call left ringing', () => {
+  let third: TestUser;
+
+  beforeEach(async () => {
+    third = await createUser('Yaw Third');
+    const invite = await createInvitation(owner.id, familyId, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+    await acceptInvitation(third.id, invite.code);
+  });
+
+  it('is retired even when a newer call is hiding it', async () => {
+    // Ama rings Kofi privately. Nobody answers.
+    const unanswered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await ageOutRinging(unanswered.id);
+
+    // Yaw then starts a family call, which nothing prevents — the live-call
+    // index is a plain index, not a unique one.
+    await startCall(third.id, familyId, 'audio');
+
+    await getActiveCall(member.id, familyId);
+
+    expect(await statusOf(unanswered.id)).toBe('missed');
+  });
+
+  it('shows up as a missed call rather than disappearing', async () => {
+    const unanswered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await ageOutRinging(unanswered.id);
+    await startCall(third.id, familyId, 'audio');
+
+    await getActiveCall(member.id, familyId);
+    const history = await listRecentCalls(member.id, familyId);
+
+    const entry = history.find((c) => c.id === unanswered.id);
+    expect(entry, 'the unanswered call vanished from history').toBeDefined();
+    expect(entry?.status).toBe('missed');
+  });
+
+  it('is retired by any member of the family looking', async () => {
+    const unanswered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await ageOutRinging(unanswered.id);
+
+    // Yaw is not a participant of that private call and cannot see it, but
+    // looking at the family's calls should still not leave it ringing.
+    await getActiveCall(third.id, familyId);
+
+    expect(await statusOf(unanswered.id)).toBe('missed');
+  });
+
+  it('clears the signalling, which is the only place SDP lingers', async () => {
+    const unanswered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await sendSignal(owner.id, familyId, unanswered.id, {
+      kind: 'offer',
+      toUserId: member.id,
+      payload: { sdp: 'v=0 fake offer' },
+    });
+    await ageOutRinging(unanswered.id);
+    await startCall(third.id, familyId, 'audio');
+
+    await getActiveCall(member.id, familyId);
+
+    const left = await db
+      .select({ id: callSignals.id })
+      .from(callSignals)
+      .where(eq(callSignals.callId, unanswered.id));
+
+    expect(left).toHaveLength(0);
+  });
+
+  it('leaves a call still within its ringing window alone', async () => {
+    const fresh = await startCall(owner.id, familyId, 'audio', [member.id]);
+
+    await getActiveCall(member.id, familyId);
+
+    expect(await statusOf(fresh.id)).toBe('ringing');
+  });
+
+  it('never retires a call somebody actually answered', async () => {
+    const answered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await joinCall(member.id, familyId, answered.id);
+    // A long call is not a stale one; only `ringing` is swept.
+    await ageOutRinging(answered.id);
+
+    await getActiveCall(member.id, familyId);
+
+    expect(await statusOf(answered.id)).toBe('active');
+  });
+
+  it('does not reach into another family', async () => {
+    const unanswered = await startCall(owner.id, familyId, 'audio', [member.id]);
+    await ageOutRinging(unanswered.id);
+
+    const other = await createFamily(outsider.id, 'Somebody Else');
+    await getActiveCall(outsider.id, other.id);
+
+    expect(await statusOf(unanswered.id)).toBe('ringing');
   });
 });

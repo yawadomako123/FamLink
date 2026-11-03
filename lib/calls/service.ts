@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
   callParticipants,
@@ -391,6 +391,10 @@ export async function getActiveCall(
 ): Promise<CallView | null> {
   await requireMembership(userId, familyId);
 
+  // Before looking: anything that has been ringing too long is not a live
+  // call, and must not be able to hide behind a newer one.
+  await retireStaleRinging(familyId);
+
   /*
    * Scoped to calls this member is a participant of.
    *
@@ -415,20 +419,50 @@ export async function getActiveCall(
 
   if (!call) return null;
 
-  if (
-    call.status === 'ringing' &&
-    Date.now() - call.startedAt.getTime() > RING_TIMEOUT_MS
-  ) {
-    await db
-      .update(calls)
-      .set({ status: 'missed', endedAt: new Date() })
-      .where(and(eq(calls.id, call.id), eq(calls.status, 'ringing')));
-    await db.delete(callSignals).where(eq(callSignals.callId, call.id));
-    return null;
-  }
-
   const name = await displayName(call.initiatorId).catch(() => 'A family member');
   return toView(call, userId, name, await loadParticipants(call.id));
+}
+
+/**
+ * Retires every call left ringing past the timeout.
+ *
+ * This used to be done to one call only — whichever `getActiveCall` happened
+ * to pick, which is the newest ringing or active one for that member. Any
+ * older ringing call was never reached, and the consequence was not a
+ * cosmetic one: call history lists `ended`, `missed` and `declined`, so a row
+ * stuck at `ringing` does not appear as a missed call, it **does not appear
+ * at all**. Somebody rang, nobody answered, and neither party was ever told
+ * it happened.
+ *
+ * Reaching that state is ordinary: a private call to one member that goes
+ * unanswered, and then anybody starting a second call, which nothing
+ * prevents — `calls_live_idx` is a plain index, not a unique one.
+ *
+ * Sweeping the whole family also clears the signalling rows, which this
+ * module is careful about elsewhere because they are the only place SDP
+ * lingers. A call that was never retired kept its own indefinitely.
+ */
+async function retireStaleRinging(familyId: string): Promise<void> {
+  const retired = await db
+    .update(calls)
+    .set({ status: 'missed', endedAt: new Date() })
+    .where(
+      and(
+        eq(calls.familyId, familyId),
+        eq(calls.status, 'ringing'),
+        lt(calls.startedAt, new Date(Date.now() - RING_TIMEOUT_MS)),
+      ),
+    )
+    .returning({ id: calls.id });
+
+  if (retired.length === 0) return;
+
+  await db.delete(callSignals).where(
+    inArray(
+      callSignals.callId,
+      retired.map((row) => row.id),
+    ),
+  );
 }
 
 async function loadParticipants(callId: string) {
