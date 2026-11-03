@@ -1,5 +1,10 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { countUnreadMessagesByFamily, markThreadRead, sendMessage } from '@/lib/chat/service';
+import {
+  countUnreadMessagesByFamily,
+  listMessages,
+  markThreadRead,
+  sendMessage,
+} from '@/lib/chat/service';
 import {
   countUnreadByFamily,
   markRead,
@@ -10,6 +15,7 @@ import {
   acceptInvitation,
   createFamily,
   createInvitation,
+  leaveFamily,
 } from '@/lib/families/service';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
@@ -124,6 +130,65 @@ describe('unread messages per family', () => {
     await sendMessage(owner.id, homeId, 'one');
 
     expect((await countUnreadMessagesByFamily(outsider.id)).size).toBe(0);
+  });
+});
+
+describe('joining a family that already has history', () => {
+  /*
+   * Unread is counted as "sent after your read mark", and with no mark that
+   * was every message the family had ever sent. So joining handed somebody
+   * the entire back catalogue as unread — nothing of which was waiting on
+   * them, since they had not been in the family when it was said.
+   *
+   * Notifications already got this right by being one row per recipient. This
+   * is chat agreeing with that instead of contradicting it.
+   */
+  it('does not hand a new member the whole back catalogue', async () => {
+    const quiet = (await createFamily(owner.id, 'The Quiet Ones')).id;
+    for (let i = 0; i < 5; i += 1) {
+      await sendMessage(owner.id, quiet, `said before you arrived ${i}`);
+    }
+
+    await join(quiet, member);
+
+    expect((await countUnreadMessagesByFamily(member.id)).has(quiet)).toBe(false);
+  });
+
+  it('still counts what is said after they arrive', async () => {
+    const quiet = (await createFamily(owner.id, 'The Quiet Ones')).id;
+    await sendMessage(owner.id, quiet, 'before');
+
+    await join(quiet, member);
+    await sendMessage(owner.id, quiet, 'after');
+
+    expect((await countUnreadMessagesByFamily(member.id)).get(quiet)).toBe(1);
+  });
+
+  it('leaves the history itself readable', async () => {
+    const quiet = (await createFamily(owner.id, 'The Quiet Ones')).id;
+    await sendMessage(owner.id, quiet, 'said before you arrived');
+
+    await join(quiet, member);
+
+    // Not counted as unread, but not hidden either — it still scrolls back.
+    const thread = await listMessages(member.id, quiet);
+    expect(thread.some((m) => m.content === 'said before you arrived')).toBe(true);
+  });
+
+  it('does not hand a rejoining member everything said while they were gone', async () => {
+    const quiet = (await createFamily(owner.id, 'The Quiet Ones')).id;
+    await join(quiet, member);
+    await leaveFamily(member.id, quiet);
+
+    // The read mark survives leaving — it hangs off the family and the user,
+    // not the membership — so without resetting it this came back as 3.
+    for (let i = 0; i < 3; i += 1) {
+      await sendMessage(owner.id, quiet, `while you were away ${i}`);
+    }
+
+    await join(quiet, member);
+
+    expect((await countUnreadMessagesByFamily(member.id)).has(quiet)).toBe(false);
   });
 });
 

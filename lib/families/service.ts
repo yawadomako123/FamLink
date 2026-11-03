@@ -6,6 +6,7 @@ import {
   families,
   familyMembers,
   invitations,
+  messageReads,
   users,
   type Family,
   type FamilyMember,
@@ -431,6 +432,40 @@ export async function acceptInvitation(
       locationSharingState: 'off',
       locationVisibility: 'everyone',
     });
+
+    /*
+     * Start the chat read mark at the moment of joining.
+     *
+     * Unread messages are counted as "sent after your read mark", and with no
+     * mark at all that is every message the family has ever sent. So joining a
+     * family with any history produced an instant badge of its entire back
+     * catalogue — 40 messages on a quiet one, "9+" on a real one — none of
+     * which the new member had any reason to treat as waiting on them.
+     *
+     * Notifications already work the right way round, by being one row per
+     * recipient: somebody who joins later does not inherit old alerts. This
+     * makes chat agree with that rather than contradict it.
+     *
+     * The history itself is untouched and still scrolls back; this is about
+     * what counts as *unread*, which should start when you arrive.
+     */
+    const joinedAt = new Date();
+
+    await tx
+      .insert(messageReads)
+      .values({ familyId: invitation.familyId, userId, lastReadAt: joinedAt })
+      .onConflictDoUpdate({
+        target: [messageReads.familyId, messageReads.userId],
+        /*
+         * Leaving a family does not delete the read mark — it hangs off the
+         * family and the user, not the membership — so somebody who left in
+         * January and rejoins in June still has January's mark. Moving it
+         * forward applies the same rule to them as to a first-time joiner,
+         * and cannot drag any mark backwards, since none can be in the
+         * future.
+         */
+        set: { lastReadAt: joinedAt },
+      });
 
     const [family] = await tx
       .select({ name: families.name })
