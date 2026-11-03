@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
   checkInRequests,
@@ -143,7 +143,21 @@ export async function respondToCheckIn(
         eq(checkInRequests.familyId, familyId),
         // Only the person asked can answer, and only once.
         eq(checkInRequests.targetId, userId),
-        eq(checkInRequests.status, 'pending'),
+        /*
+         * Expired counts as answerable.
+         *
+         * Expiry exists to stop a question nagging, not to invalidate the
+         * answer. Somebody tapping "I'm OK" from a notification thirteen hours
+         * later is still telling their family something worth hearing, and
+         * refusing it would answer a visible, tappable alert with "that
+         * check-in was not found".
+         *
+         * This matters now that stale requests are actually retired: before,
+         * expiry only fired when the person being asked happened to open the
+         * app, so a late reply slipped through by accident rather than by
+         * decision.
+         */
+        inArray(checkInRequests.status, ['pending', 'expired']),
       ),
     )
     .returning();
@@ -180,17 +194,7 @@ export async function listPendingForMe(
 ): Promise<CheckInView[]> {
   await requireMembership(userId, familyId);
 
-  // Retire anything past its window so it stops appearing.
-  await db
-    .update(checkInRequests)
-    .set({ status: 'expired' })
-    .where(
-      and(
-        eq(checkInRequests.targetId, userId),
-        eq(checkInRequests.status, 'pending'),
-        lt(checkInRequests.expiresAt, new Date()),
-      ),
-    );
+  await expireStaleCheckIns(familyId);
 
   const rows = await db
     .select({
@@ -219,6 +223,8 @@ export async function listCheckIns(
   limit = 20,
 ): Promise<CheckInView[]> {
   await requireMembership(userId, familyId);
+
+  await expireStaleCheckIns(familyId);
 
   const requester = users;
 
@@ -279,8 +285,23 @@ function toView(
   };
 }
 
-/** Housekeeping for anything left pending past its window. */
-export async function expireStaleCheckIns(): Promise<number> {
+/**
+ * Retires anything left pending past its window.
+ *
+ * Scoped to a family and run on every read, because the alternative was
+ * worse than it looked: expiry used to fire only for the person *being
+ * asked*, when they opened the app. Somebody who never opened it left the
+ * request pending forever — so the one case where the status matters most,
+ * "they have not answered", was the one case nothing ever recorded, and it
+ * depended on an action by the very person who was not responding.
+ *
+ * A family-wide sweep means the person who asked can discover the outcome by
+ * looking, without waiting on the person who went quiet.
+ *
+ * Called with no family id it sweeps everything, which is what a scheduled
+ * job would want.
+ */
+export async function expireStaleCheckIns(familyId?: string): Promise<number> {
   const expired = await db
     .update(checkInRequests)
     .set({ status: 'expired' })
@@ -289,11 +310,48 @@ export async function expireStaleCheckIns(): Promise<number> {
         eq(checkInRequests.status, 'pending'),
         lt(checkInRequests.expiresAt, new Date()),
         isNull(checkInRequests.respondedAt),
+        ...(familyId ? [eq(checkInRequests.familyId, familyId)] : []),
       ),
     )
     .returning({ id: checkInRequests.id });
 
   return expired.length;
+}
+
+/**
+ * The asks this member sent that never got an answer.
+ *
+ * The gap this fills: somebody could ask "are you OK?", and then had no way
+ * at all to see what became of it. A reply arrived as a notification; silence
+ * arrived as nothing, which is indistinguishable from the app having failed
+ * to send the question. `listCheckIns` could have told them and no screen
+ * ever called it.
+ */
+export async function listSentCheckIns(
+  userId: string,
+  familyId: string,
+  limit = 5,
+): Promise<CheckInView[]> {
+  await requireMembership(userId, familyId);
+
+  await expireStaleCheckIns(familyId);
+
+  const rows = await db
+    .select({ request: checkInRequests, targetName: users.name })
+    .from(checkInRequests)
+    .innerJoin(users, eq(users.id, checkInRequests.targetId))
+    .where(
+      and(
+        eq(checkInRequests.familyId, familyId),
+        // Scoped to the caller's own asks: what somebody else asked is theirs.
+        eq(checkInRequests.requesterId, userId),
+        inArray(checkInRequests.status, ['pending', 'expired']),
+      ),
+    )
+    .orderBy(desc(checkInRequests.createdAt))
+    .limit(Math.min(limit, 20));
+
+  return rows.map((r) => toView(r.request, 'You', r.targetName));
 }
 
 export { sql };

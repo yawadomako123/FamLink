@@ -9,8 +9,10 @@ import {
   createInvitation,
 } from '@/lib/families/service';
 import {
+  expireStaleCheckIns,
   listCheckIns,
   listPendingForMe,
+  listSentCheckIns,
   requestCheckIn,
   respondToCheckIn,
 } from '@/lib/checkins/service';
@@ -200,6 +202,169 @@ describe('listing check-ins', () => {
     expect(await listCheckIns(third.id, familyId)).toHaveLength(0);
     expect(await listCheckIns(owner.id, familyId)).toHaveLength(1);
     expect(await listCheckIns(member.id, familyId)).toHaveLength(1);
+  });
+});
+
+/* ========================================================================== */
+
+/** Drags a request's window into the past, as if it were sent long ago. */
+async function ageOut(checkInId: string) {
+  await db
+    .update(checkInRequests)
+    .set({ expiresAt: new Date(Date.now() - 60_000) })
+    .where(eq(checkInRequests.id, checkInId));
+}
+
+async function statusOf(checkInId: string) {
+  const [row] = await db
+    .select({ status: checkInRequests.status })
+    .from(checkInRequests)
+    .where(eq(checkInRequests.id, checkInId))
+    .limit(1);
+
+  return row?.status;
+}
+
+/**
+ * Check-ins that nobody answers.
+ *
+ * The case the whole expiry mechanism exists for, and the one it used to miss
+ * entirely: expiry fired only for the person *being asked*, and only when they
+ * opened the app. Somebody who never opened it left the request pending
+ * forever — so "they have not answered" was the single outcome the app never
+ * recorded, and recording it depended on an action by the person who was not
+ * answering.
+ */
+describe('a check-in nobody answers', () => {
+  it('is retired when the person who asked looks, not only the person asked', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    // Owner reads. Member has not opened the app at all.
+    await listSentCheckIns(owner.id, familyId);
+
+    expect(await statusOf(sent.id)).toBe('expired');
+  });
+
+  it('is retired by any member of the family reading', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    await listPendingForMe(third.id, familyId);
+
+    expect(await statusOf(sent.id)).toBe('expired');
+  });
+
+  it('shows the person who asked that it went unanswered', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    const [outcome] = await listSentCheckIns(owner.id, familyId);
+
+    // Silence used to arrive as nothing at all, which looks exactly like the
+    // app having failed to ask.
+    expect(outcome?.id).toBe(sent.id);
+    expect(outcome?.status).toBe('expired');
+    expect(outcome?.targetName).toBe('Kofi Member');
+  });
+
+  it('stops nagging the person who was asked', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    expect(await listPendingForMe(member.id, familyId)).toHaveLength(0);
+  });
+
+  it('can still be answered afterwards', async () => {
+    /*
+     * Expiry stops a question nagging; it does not make the answer worthless.
+     * A tap on a notification thirteen hours later is still worth delivering,
+     * and must not come back as "that check-in was not found".
+     */
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+    await listSentCheckIns(owner.id, familyId);
+    expect(await statusOf(sent.id)).toBe('expired');
+
+    const answered = await respondToCheckIn(member.id, familyId, sent.id, 'ok');
+
+    expect(answered.status).toBe('answered');
+    expect(answered.reply).toBe('ok');
+  });
+
+  it('tells the family when a late answer says they need help', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+    await listSentCheckIns(owner.id, familyId);
+
+    await respondToCheckIn(member.id, familyId, sent.id, 'need_help');
+
+    const notes = await listNotifications(owner.id, familyId);
+    expect(notes.some((n) => n.title.includes('needs help'))).toBe(true);
+  });
+
+  it('still cannot be answered twice', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await respondToCheckIn(member.id, familyId, sent.id, 'ok');
+    await ageOut(sent.id);
+
+    // Allowing an expired request to be answered must not reopen an answered
+    // one: the sweep only touches rows that are still pending.
+    await expectApiError(respondToCheckIn(member.id, familyId, sent.id, 'need_help'), 404);
+  });
+
+  it('leaves an answered check-in alone', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await respondToCheckIn(member.id, familyId, sent.id, 'ok');
+    await ageOut(sent.id);
+
+    await expireStaleCheckIns(familyId);
+
+    expect(await statusOf(sent.id)).toBe('answered');
+  });
+
+  it('leaves a request that is still within its window alone', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+
+    await expireStaleCheckIns(familyId);
+
+    expect(await statusOf(sent.id)).toBe('pending');
+    expect(await listPendingForMe(member.id, familyId)).toHaveLength(1);
+  });
+
+  it('does not sweep another family', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    const other = await createFamily(outsider.id, 'Somebody Else');
+    await expireStaleCheckIns(other.id);
+
+    expect(await statusOf(sent.id)).toBe('pending');
+  });
+
+  it('shows somebody only their own asks', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    await ageOut(sent.id);
+
+    // What owner asked is owner's business, not third's.
+    expect(await listSentCheckIns(third.id, familyId)).toHaveLength(0);
+    expect(await listSentCheckIns(owner.id, familyId)).toHaveLength(1);
+    expect(sent.id.length).toBeGreaterThan(0);
+  });
+
+  it('drops an ask from the sent list once it is answered', async () => {
+    const sent = await requestCheckIn(owner.id, familyId, member.id);
+    expect(await listSentCheckIns(owner.id, familyId)).toHaveLength(1);
+
+    await respondToCheckIn(member.id, familyId, sent.id, 'ok');
+
+    // Answered arrives as a notification; this list is for what has not.
+    expect(await listSentCheckIns(owner.id, familyId)).toHaveLength(0);
+  });
+
+  it('refuses a non-member', async () => {
+    // 404, not 403: a non-member is not told the family exists.
+    await expectApiError(listSentCheckIns(outsider.id, familyId), 404);
   });
 });
 

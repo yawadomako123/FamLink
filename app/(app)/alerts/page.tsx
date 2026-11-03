@@ -11,8 +11,9 @@ import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { listNotifications } from '@/lib/notifications/service';
 import { listActiveEmergencies } from '@/lib/notifications/emergency';
-import { listPendingForMe } from '@/lib/checkins/service';
+import { listPendingForMe, listSentCheckIns } from '@/lib/checkins/service';
 import { CheckInPanel } from '@/components/checkins/check-in-panel';
+import { SentCheckIns } from '@/components/checkins/sent-check-ins';
 
 export const metadata: Metadata = { title: 'Alerts' };
 
@@ -43,10 +44,11 @@ export default async function AlertsPage() {
     );
   }
 
-  const [notifications, emergencies, pendingCheckIns] = await Promise.all([
+  const [notifications, emergencies, pendingCheckIns, sentCheckIns] = await Promise.all([
     listNotifications(session.user.id, current.id),
     listActiveEmergencies(session.user.id, current.id),
     listPendingForMe(session.user.id, current.id),
+    listSentCheckIns(session.user.id, current.id),
   ]);
 
   return (
@@ -70,6 +72,25 @@ export default async function AlertsPage() {
               requesterId: c.requesterId,
               requesterName: c.requesterName,
               note: c.note,
+              createdAt: c.createdAt.toISOString(),
+            }))}
+          />
+        </div>
+      )}
+
+      {/*
+        Below a question waiting on you, above the log: what you asked and
+        have not heard back about. Previously this had nowhere to appear at
+        all, so an unanswered check-in simply vanished.
+      */}
+      {sentCheckIns.length > 0 && (
+        <div className="px-4 md:px-6 pt-6 max-w-2xl">
+          <SentCheckIns
+            sent={sentCheckIns.map((c) => ({
+              id: c.id,
+              targetId: c.targetId,
+              targetName: c.targetName,
+              status: c.status === 'expired' ? 'expired' : 'pending',
               createdAt: c.createdAt.toISOString(),
             }))}
           />
