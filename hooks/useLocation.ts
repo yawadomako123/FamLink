@@ -347,10 +347,18 @@ export function useLocation({
     [send],
   );
 
-  const onError = React.useCallback((error: GeolocationPositionError) => {
-    switch (error.code) {
-      case error.PERMISSION_DENIED:
-        setPermission('denied');
+  /**
+   * @param source where the failure came from. `watch` means a permission that
+   *   had already been granted has stopped working; `acquire` means the person
+   *   was just asked and said no. The remedy differs, so the message does.
+   *   `watchPosition` calls its error handler with one argument, so the watch
+   *   case is the default.
+   */
+  const onError = React.useCallback(
+    (error: GeolocationPositionError, source: 'watch' | 'acquire' = 'watch') => {
+      switch (error.code) {
+        case error.PERMISSION_DENIED:
+          setPermission('denied');
         /*
          * The server has to be told, not just React.
          *
@@ -362,30 +370,52 @@ export function useLocation({
          * sharing, for ever. Their family's map went on saying "Sharing
          * location" above a position that only got older.
          */
-        void revoke();
-        setProblem({
-          kind: 'permission-denied',
-          message:
-            'Location permission was denied. To share your location, allow location access for this site in your browser settings.',
-        });
-        break;
-      case error.POSITION_UNAVAILABLE:
-        setProblem({
-          kind: 'unavailable',
-          message:
-            "Your device couldn't determine its location. This can happen indoors or with location services switched off.",
-        });
-        break;
-      case error.TIMEOUT:
-        setProblem({
-          kind: 'timeout',
-          message: 'Getting a location fix is taking longer than usual. Still trying…',
-        });
-        break;
-      default:
-        setProblem({ kind: 'unavailable', message: 'Location is unavailable right now.' });
-    }
-  }, [revoke]);
+          void revoke();
+          /*
+           * Two different things arrive here, and sending everybody to browser
+           * settings was wrong for the common one.
+           *
+           * A watch that fails had permission a moment ago and has lost it —
+           * which on an iPhone happens on its own after about a day, and is
+           * the whole of "I turned location on, left the app, and a day later
+           * it was off and asking again". Telling that person to change a
+           * browser setting sends them hunting for something already set to
+           * "ask"; all they need to do is switch sharing on and accept.
+           *
+           * An acquisition that fails is somebody who was just asked and
+           * declined. The browser will not ask again by itself, so settings
+           * really is the only way back and that message is right for them.
+           */
+          setProblem({
+            kind: 'permission-denied',
+            message:
+              source === 'watch'
+                ? 'Your browser has stopped allowing FamLink to use your location. This can happen on its own after a while — switch sharing back on to allow it again.'
+                : 'Location permission was denied. To share your location, allow location access for this site in your browser settings.',
+          });
+          break;
+        case error.POSITION_UNAVAILABLE:
+          setProblem({
+            kind: 'unavailable',
+            message:
+              "Your device couldn't determine its location. This can happen indoors or with location services switched off.",
+          });
+          break;
+        case error.TIMEOUT:
+          setProblem({
+            kind: 'timeout',
+            message: 'Getting a location fix is taking longer than usual. Still trying…',
+          });
+          break;
+        default:
+          setProblem({
+            kind: 'unavailable',
+            message: 'Location is unavailable right now.',
+          });
+      }
+    },
+    [revoke],
+  );
 
   /* ------------------------------------------------------------- the watch -- */
 
@@ -490,7 +520,7 @@ export function useLocation({
         },
         (error) => {
           clearTimeout(timer);
-          onError(error);
+          onError(error, 'acquire');
           finish(error.code === error.PERMISSION_DENIED ? 'denied' : 'unavailable');
         },
         ACQUIRE_OPTIONS,
