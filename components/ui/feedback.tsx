@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AlertTriangle, Info, CheckCircle2, WifiOff } from 'lucide-react';
+import { AlertTriangle, Info, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /* -------------------------------------------------------------------------- */
@@ -94,25 +94,13 @@ export function EmptyState({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* Connection banner                                                           */
-/* -------------------------------------------------------------------------- */
-
-/** Shown when the realtime stream drops. Honest about what is happening. */
-export function ConnectionBanner({ state }: { state: 'reconnecting' | 'polling' | 'offline' }) {
-  const copy = {
-    reconnecting: 'Connection lost. Trying to reconnect…',
-    polling: 'Live updates unavailable. Refreshing periodically.',
-    offline: "You're offline. Showing the last data we received.",
-  } as const;
-
-  return (
-    <div
-      role="status"
-      className="flex items-center justify-center gap-2 bg-tint-warn text-on-tint-warn text-xs font-medium px-4 py-2 border-b border-line-warn"
-    >
-      <WifiOff aria-hidden className="size-3.5" />
-      {copy[state]}
-    </div>
-  );
-}
+/*
+ * There was a ConnectionBanner here, rendered by nothing.
+ *
+ * The map and the chat each surface degradation with their own inline Alert,
+ * placed where the stale data actually is rather than as a bar across the top
+ * — and the map additionally speeds its poll from 120s to 20s when the stream
+ * gives up, so "live updates unavailable" would have overstated the problem.
+ * A component that looks like the app's connection indicator, and is wired to
+ * nothing, only invites someone to believe that indicator exists.
+ */

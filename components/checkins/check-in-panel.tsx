@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Alert } from '@/components/ui/feedback';
 import { api, errorMessage } from '@/lib/api/client';
-import { cn } from '@/lib/utils';
 import { timeAgo } from '@/lib/time';
 
 export interface PendingCheckIn {
@@ -171,73 +170,12 @@ export function CheckInPanel({
   );
 }
 
-/* -------------------------------------------------------------------------- */
-
-/** Sends a check-in to one family member. Used from the family member list. */
-export function AskCheckInButton({
-  familyId,
-  targetId,
-  targetName,
-}: {
-  familyId: string;
-  targetId: string;
-  targetName: string;
-}) {
-  const router = useRouter();
-  const [busy, setBusy] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
-
-  async function ask() {
-    setBusy(true);
-    setError(null);
-
-    try {
-      await api.post(`/api/v1/families/${familyId}/check-ins`, { targetId });
-      setSent(true);
-      router.refresh();
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (sent) {
-    return (
-      <span className="text-xs text-on-tint-brand font-medium whitespace-nowrap">Asked</span>
-    );
-  }
-
-  return (
-    <>
-      <Button
-        size="sm"
-        variant="ghost"
-        loading={busy}
-        onClick={() => void ask()}
-        aria-label={`Ask ${targetName} if they're OK`}
-        title={error ?? undefined}
-        // Icon-only on a phone. In a member row this button competes with the
-        // name, the sharing status and a menu for about 280px, and the label is
-        // the first thing that can go without losing meaning.
-        className={cn('px-2 sm:px-3', error && 'text-danger-600')}
-      >
-        <UserCheck aria-hidden className="size-3.5" />
-        <span className="hidden sm:inline">Check in</span>
-      </Button>
-
-      {error && (
-        <>
-          {/* Announced everywhere; only spelled out where there is room for it. */}
-          <span role="alert" className="sr-only">
-            {error}
-          </span>
-          <span aria-hidden className="hidden sm:inline text-xs text-danger-600">
-            {error}
-          </span>
-        </>
-      )}
-    </>
-  );
-}
+/*
+ * There was an AskCheckInButton here, rendered by nothing.
+ *
+ * Its own docstring claimed it was "used from the family member list", which
+ * was not true of this copy — `AskCheckInMenuItem` in
+ * components/family/family-view.tsx is the one the list actually renders. Two
+ * components for one action, only one of them wired, with the dead one
+ * asserting it was the live one.
+ */

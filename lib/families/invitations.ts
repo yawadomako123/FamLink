@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 
 /**
  * Invitation codes.
@@ -35,14 +35,16 @@ export function hashInvitationCode(code: string): string {
   return createHash('sha256').update(code.trim().toUpperCase(), 'utf8').digest('hex');
 }
 
-/** Constant-time comparison, so timing cannot be used to narrow a code. */
-export function invitationCodeMatches(code: string, expectedHash: string): boolean {
-  const actual = Buffer.from(hashInvitationCode(code), 'hex');
-  const expected = Buffer.from(expectedHash, 'hex');
-
-  if (actual.length !== expected.length) return false;
-  return timingSafeEqual(actual, expected);
-}
+/*
+ * There was an `invitationCodeMatches` here offering a constant-time
+ * comparison, called by nothing.
+ *
+ * Redemption looks a code up by its hash — `where code_hash = $1`, against a
+ * unique index — so the comparison happens inside Postgres and there is no
+ * JavaScript equality whose timing could narrow anything. Keeping a
+ * timing-safe helper nobody calls suggests a protection is in force when the
+ * thing it would protect does not exist, which is worse than not having it.
+ */
 
 export function invitationUrl(code: string, appUrl: string): string {
   return `${appUrl.replace(/\/$/, '')}/join/${code}`;
