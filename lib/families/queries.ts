@@ -13,6 +13,7 @@ import {
 } from '@/lib/db/schema';
 import { requireMembership, requireRole } from '@/lib/permissions/family';
 import { invitationStatus, type InvitationStatus } from './invitations';
+import { withSharingExpiry } from '@/lib/location/expiry';
 
 /* -------------------------------------------------------------------------- */
 /* Shapes returned to the UI                                                   */
@@ -37,6 +38,8 @@ export interface FamilyMemberView {
   /** The member's own sharing settings. Visible to the whole family: knowing
    *  *whether* someone shares is not the same as knowing where they are. */
   locationSharingState: LocationSharingState;
+  /** Set while a timed window is running. Already applied to the state above. */
+  sharingExpiresAt: Date | null;
   locationVisibility: LocationVisibility;
   lastActiveAt: Date | null;
   batteryPercentage: number | null;
@@ -121,6 +124,7 @@ export async function listFamilyMembers(
       joinedAt: familyMembers.joinedAt,
       locationSharingState: familyMembers.locationSharingState,
       locationVisibility: familyMembers.locationVisibility,
+      sharingExpiresAt: familyMembers.sharingExpiresAt,
       lastActiveAt: familyMembers.lastActiveAt,
       batteryPercentage: familyMembers.batteryPercentage,
       isCharging: familyMembers.isCharging,
@@ -131,7 +135,16 @@ export async function listFamilyMembers(
     .where(eq(familyMembers.familyId, familyId))
     .orderBy(asc(familyMembers.joinedAt));
 
-  return rows;
+  /*
+   * A lapsed timed window reads as `off`.
+   *
+   * Without this the dashboard and the family member list went on saying
+   * "Sharing location" after the hour was up, because nothing updates the row
+   * when a window ends — see lib/location/expiry.ts. The map was already
+   * right, which made the disagreement between screens the visible symptom.
+   */
+  const now = Date.now();
+  return rows.map((row) => withSharingExpiry(row, now));
 }
 
 /** Family record plus the caller's own role. Authorized. */

@@ -8,6 +8,7 @@ import { SharingControl } from '@/components/location/sharing-control';
 import { SignOutButton } from '@/components/profile/sign-out-button';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
+import { withSharingExpiry } from '@/lib/location/expiry';
 import { getMembership } from '@/lib/permissions/family';
 import { isAvatarUploadEnabled } from '@/lib/env';
 
@@ -19,8 +20,16 @@ export default async function ProfilePage() {
     session.user.id,
   );
 
-  // The sharing control is per-family, so it needs this user's membership row.
-  const membership = current ? await getMembership(session.user.id, current.id) : null;
+  /*
+   * The sharing control is per-family, so it needs this user's membership row
+   * — read through the timed-expiry rule, because the switch initialises from
+   * `locationSharingState` and a lapsed window leaves that column saying
+   * `sharing`. Without this the switch sat in the "on" position after sharing
+   * had already ended, which is the one place that lie matters most: it is
+   * the member's own account of what they are sharing.
+   */
+  const raw = current ? await getMembership(session.user.id, current.id) : null;
+  const membership = raw ? withSharingExpiry(raw) : null;
 
   return (
     <AppShell

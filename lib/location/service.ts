@@ -12,6 +12,7 @@ import {
 } from '@/lib/db/schema';
 import { requireMembership } from '@/lib/permissions/family';
 import { canViewLocation } from '@/lib/permissions/location-visibility';
+import { withSharingExpiry } from './expiry';
 import { Errors } from '@/lib/api/errors';
 import { evaluateAndRecordGeofences, type DetectedTransition } from '@/lib/places/service';
 import {
@@ -420,11 +421,9 @@ export async function getFamilyLocations(
    * known position indefinitely, which is precisely the promise it breaks.
    */
   const now = Date.now();
-  const members = rawMembers.map((m) =>
-    m.sharingExpiresAt && m.sharingExpiresAt.getTime() <= now
-      ? { ...m, locationSharingState: 'off' as const }
-      : m,
-  );
+  // Shared with the member list and the member's own switch, which read the
+  // same column and were getting a different answer from it.
+  const members = rawMembers.map((m) => withSharingExpiry(m, now));
 
   // Decide who is visible *before* fetching any coordinates, so coordinates
   // for withheld members are never loaded into memory at all.
