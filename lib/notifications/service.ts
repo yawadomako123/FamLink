@@ -11,7 +11,7 @@ import {
   type Notification,
   type NotificationType,
 } from '@/lib/db/schema';
-import { sendPushNotification } from '@/lib/firebase/server';
+import { sendPushNotification, type PushOutcome } from '@/lib/firebase/server';
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
@@ -144,9 +144,10 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
       const silenceable = input.type !== 'SOS';
 
       // Push notifications are fired in the background
-      Promise.allSettled(
-        subs.map((sub) =>
-          sendPushNotification(
+      void Promise.allSettled(
+        subs.map(async (sub) => ({
+          token: sub.token,
+          outcome: await sendPushNotification(
             sub.token,
             input.title,
             input.message,
@@ -156,8 +157,19 @@ export async function notifyFamily(input: NotifyInput): Promise<void> {
             },
             input.pushTag,
           ),
-        ),
-      ).catch((err) => console.error('[notifications] FCM push failed', err));
+        })),
+      )
+        .then((results) =>
+          pruneDeadTokens(
+            results
+              .filter(
+                (r): r is PromiseFulfilledResult<{ token: string; outcome: PushOutcome }> =>
+                  r.status === 'fulfilled' && r.value.outcome === 'gone',
+              )
+              .map((r) => r.value.token),
+          ),
+        )
+        .catch((err) => console.error('[notifications] FCM push failed', err));
     }
   } catch (error) {
     console.error('[notifications] delivery failed', error);
@@ -315,6 +327,32 @@ export async function notifyPlaceEvent(
     recipientIds,
     exclude: actorId,
   });
+}
+
+/**
+ * Retires push tokens that FCM says will never deliver again.
+ *
+ * Nothing ever deleted one. Tokens were inserted when a device registered and
+ * updated when it re-registered, and that was the whole lifecycle — so an
+ * uninstalled app, cleared site data, or a routine token rotation left a row
+ * that every future family notification would try, fail, and keep. They
+ * accumulate per person and never leave.
+ *
+ * Only `gone` reaches here, which is narrower than "the send failed": a
+ * network blip or a quota error must not cost somebody their alerts. See
+ * `isDeadTokenError`.
+ */
+export async function pruneDeadTokens(tokens: string[]): Promise<number> {
+  if (tokens.length === 0) return 0;
+
+  // Not logged: a device that was uninstalled or whose token rotated is
+  // ordinary housekeeping, and the count is returned for callers that want it.
+  const removed = await db
+    .delete(pushSubscriptions)
+    .where(inArray(pushSubscriptions.token, tokens))
+    .returning({ token: pushSubscriptions.token });
+
+  return removed.length;
 }
 
 /**

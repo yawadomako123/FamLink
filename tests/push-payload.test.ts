@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPushMessage } from '@/lib/firebase/message';
+import { isDeadTokenError } from '@/lib/firebase/server';
 
 /**
  * The shape of an outgoing push.
@@ -75,5 +76,47 @@ describe('push payload', () => {
     for (const [key, value] of Object.entries(message.data ?? {})) {
       expect(typeof value, `${key} must be a string`).toBe('string');
     }
+  });
+});
+
+/**
+ * Deciding that a token is finished.
+ *
+ * The asymmetry is the whole design: a token kept by mistake costs a wasted
+ * FCM call, and a token deleted by mistake costs somebody their alerts —
+ * including, on this product, an SOS. So this errs towards keeping, and only
+ * the two codes that unambiguously describe the token itself count.
+ */
+describe('dead push tokens', () => {
+  it('retires a token FCM says is no longer registered', () => {
+    // What an uninstall or cleared site data produces.
+    expect(isDeadTokenError({ code: 'messaging/registration-token-not-registered' })).toBe(true);
+  });
+
+  it('retires a token FCM rejects as invalid', () => {
+    expect(isDeadTokenError({ code: 'messaging/invalid-registration-token' })).toBe(true);
+  });
+
+  it('keeps the token when the argument was the problem', () => {
+    /*
+     * The important negative. FCM uses invalid-argument for a malformed
+     * *payload* as well as a malformed token, so treating it as a dead token
+     * would let one bad payload silently unsubscribe every device it reached.
+     */
+    expect(isDeadTokenError({ code: 'messaging/invalid-argument' })).toBe(false);
+  });
+
+  it('keeps the token through a transient failure', () => {
+    expect(isDeadTokenError({ code: 'messaging/server-unavailable' })).toBe(false);
+    expect(isDeadTokenError({ code: 'messaging/internal-error' })).toBe(false);
+    expect(isDeadTokenError({ code: 'messaging/quota-exceeded' })).toBe(false);
+  });
+
+  it('keeps the token for anything that is not a recognisable FCM error', () => {
+    expect(isDeadTokenError(new Error('socket hang up'))).toBe(false);
+    expect(isDeadTokenError(null)).toBe(false);
+    expect(isDeadTokenError(undefined)).toBe(false);
+    expect(isDeadTokenError('messaging/registration-token-not-registered')).toBe(false);
+    expect(isDeadTokenError({ code: 42 })).toBe(false);
   });
 });

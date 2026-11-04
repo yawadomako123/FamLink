@@ -13,6 +13,7 @@ import {
   listNotifications,
   markRead,
   notifyFamily,
+  pruneDeadTokens,
 } from '@/lib/notifications/service';
 import {
   cancelSos,
@@ -33,7 +34,10 @@ import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpe
  */
 vi.mock('@/lib/firebase/server', () => ({
   adminMessaging: null,
-  sendPushNotification: vi.fn(async () => true),
+  isDeadTokenError: () => false,
+  // 'sent', not true: the real function returns a PushOutcome, and a mock
+  // that disagrees would hide a caller reading the result wrongly.
+  sendPushNotification: vi.fn(async () => 'sent' as const),
 }));
 
 const pushMock = vi.mocked(sendPushNotification);
@@ -521,5 +525,65 @@ describe('quiet hours travel with the push', () => {
     // Quiet hours suppress the interruption, not the record. The alert is
     // waiting in the morning rather than lost.
     expect(await countUnread(owner.id, familyId)).toBe(1);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Push tokens that will never deliver again.
+ *
+ * Nothing ever deleted one. A token was inserted when a device registered and
+ * updated when it re-registered, and that was the entire lifecycle — so an
+ * uninstalled app, cleared site data, or a routine token rotation left a row
+ * behind that every future family notification would try, fail, and keep.
+ */
+describe('retiring dead push tokens', () => {
+  it('removes only the tokens it was given', async () => {
+    await db.insert(pushSubscriptions).values([
+      { userId: owner.id, token: 'tok-dead' },
+      { userId: owner.id, token: 'tok-alive' },
+    ]);
+
+    const removed = await pruneDeadTokens(['tok-dead']);
+
+    const left = await db
+      .select({ token: pushSubscriptions.token })
+      .from(pushSubscriptions);
+
+    expect(removed).toBe(1);
+    expect(left.map((r) => r.token)).toEqual(['tok-alive']);
+  });
+
+  it('does nothing when there is nothing to retire', async () => {
+    await db.insert(pushSubscriptions).values({ userId: owner.id, token: 'tok-alive' });
+
+    expect(await pruneDeadTokens([])).toBe(0);
+    expect(await db.select().from(pushSubscriptions)).toHaveLength(1);
+  });
+
+  it('tolerates a token that has already gone', async () => {
+    expect(await pruneDeadTokens(['never-existed'])).toBe(0);
+  });
+
+  it('stops the retired device being pushed to again', async () => {
+    await db.insert(pushSubscriptions).values([
+      { userId: owner.id, token: 'tok-dead' },
+      { userId: owner.id, token: 'tok-alive' },
+    ]);
+    await pruneDeadTokens(['tok-dead']);
+    pushMock.mockClear();
+
+    await notifyFamily({
+      familyId,
+      type: 'ARRIVED_PLACE',
+      title: 'Kofi arrived',
+      message: 'Kofi arrived at School.',
+      exclude: member.id,
+    });
+
+    const pushed = pushMock.mock.calls.map(([token]) => token);
+    expect(pushed).toContain('tok-alive');
+    expect(pushed).not.toContain('tok-dead');
   });
 });
