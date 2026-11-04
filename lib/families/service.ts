@@ -3,6 +3,7 @@ import 'server-only';
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import {
+  currentLocations,
   families,
   familyMembers,
   invitations,
@@ -104,9 +105,39 @@ export async function leaveFamily(callerId: string, familyId: string): Promise<v
     return;
   }
 
-  await db
-    .delete(familyMembers)
-    .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, callerId)));
+  await endMembership(familyId, callerId);
+}
+
+/**
+ * Removes a membership and the position that went with it.
+ *
+ * The position has to go with it. `current_locations` is keyed by user and
+ * family, not by membership, so leaving used to leave the row behind — and on
+ * rejoining, switching sharing back on published that old position to the
+ * family before the device had sent anything new. Measured: a fix recorded
+ * three months earlier, during a stint in the family that had since ended,
+ * shown as where they are.
+ *
+ * Nobody could read it in the meantime — every location read joins through
+ * `family_members` — so this is about what comes back, not what leaked while
+ * they were away.
+ *
+ * The history table is deliberately left alone. `stopSharingAndForget` exists
+ * precisely because erasing somebody's own records is irreversible and should
+ * be an explicit act, and being removed by an admin is not that act. History
+ * is unreachable without membership, so nothing is disclosed by keeping it —
+ * see the note in lib/location/service.ts.
+ */
+async function endMembership(familyId: string, userId: string): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(familyMembers)
+      .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, userId)));
+
+    await tx
+      .delete(currentLocations)
+      .where(and(eq(currentLocations.familyId, familyId), eq(currentLocations.userId, userId)));
+  });
 }
 
 /* -------------------------------------------------------------------------- */
@@ -135,9 +166,7 @@ export async function removeMember(
     throw Errors.forbidden('Only the family owner can remove an admin.');
   }
 
-  await db
-    .delete(familyMembers)
-    .where(and(eq(familyMembers.familyId, familyId), eq(familyMembers.userId, targetUserId)));
+  await endMembership(familyId, targetUserId);
 }
 
 export async function updateMemberRole(

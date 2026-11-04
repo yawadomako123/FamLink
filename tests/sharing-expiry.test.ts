@@ -1,12 +1,14 @@
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { familyMembers } from '@/lib/db/schema';
+import { currentLocations, familyMembers } from '@/lib/db/schema';
 import { hasSharingLapsed, withSharingExpiry } from '@/lib/location/expiry';
 import {
   acceptInvitation,
   createFamily,
   createInvitation,
+  leaveFamily,
+  removeMember,
 } from '@/lib/families/service';
 import { listFamilyMembers } from '@/lib/families/queries';
 import { getMembership } from '@/lib/permissions/family';
@@ -200,6 +202,116 @@ describe('a window that is still running', () => {
     const members = await listFamilyMembers(member.id, familyId);
 
     expect(members.find((m) => m.userId === owner.id)?.sharingExpiresAt).toBeInstanceOf(Date);
+  });
+});
+
+describe('a position outliving the membership it belonged to', () => {
+  /*
+   * `current_locations` is keyed by user and family, not by membership, so a
+   * membership ending left the row behind. Nobody could read it — every
+   * location read joins through `family_members` — but rejoining made it
+   * readable again, and switching sharing on republished a position from a
+   * stint in the family that had already ended, before the device had sent
+   * anything new.
+   */
+  it('is gone when the member leaves', async () => {
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracy: 12,
+      recordedAt: new Date(),
+    });
+
+    await leaveFamily(member.id, familyId);
+
+    const [left] = await db
+      .select({ userId: currentLocations.userId })
+      .from(currentLocations)
+      .where(
+        and(
+          eq(currentLocations.familyId, familyId),
+          eq(currentLocations.userId, member.id),
+        ),
+      );
+
+    expect(left).toBeUndefined();
+  });
+
+  it('is gone when an admin removes them', async () => {
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracy: 12,
+      recordedAt: new Date(),
+    });
+
+    await removeMember(owner.id, familyId, member.id);
+
+    const [left] = await db
+      .select({ userId: currentLocations.userId })
+      .from(currentLocations)
+      .where(
+        and(
+          eq(currentLocations.familyId, familyId),
+          eq(currentLocations.userId, member.id),
+        ),
+      );
+
+    expect(left).toBeUndefined();
+  });
+
+  it('does not republish an old position when they rejoin', async () => {
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracy: 12,
+      // A stint that ended long ago.
+      recordedAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+    });
+
+    await leaveFamily(member.id, familyId);
+
+    const rejoin = await createInvitation(owner.id, familyId, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+    await acceptInvitation(member.id, rejoin.code);
+
+    // They switch sharing back on, but their device has sent nothing yet.
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    const { locations: shown, withheld } = await getFamilyLocations(owner.id, familyId);
+
+    expect(shown.some((l) => l.userId === member.id)).toBe(false);
+    expect(withheld.find((w) => w.userId === member.id)?.reason).toBe('no-fix');
+  });
+
+  it('leaves another family’s position alone', async () => {
+    const other = (await createFamily(member.id, 'Kofi’s Own')).id;
+    await updateSharingSettings(member.id, other, { state: 'sharing' });
+    await recordLocation(member.id, {
+      familyId: other,
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracy: 12,
+      recordedAt: new Date(),
+    });
+
+    await leaveFamily(member.id, familyId);
+
+    const [kept] = await db
+      .select({ userId: currentLocations.userId })
+      .from(currentLocations)
+      .where(
+        and(eq(currentLocations.familyId, other), eq(currentLocations.userId, member.id)),
+      );
+
+    expect(kept).toBeDefined();
   });
 });
 
