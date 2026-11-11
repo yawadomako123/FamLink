@@ -8,6 +8,7 @@ import {
   BlobStoreNotFoundError,
   BlobNotFoundError,
   BlobStoreSuspendedError,
+  del,
   get,
   put,
   type PutCommandOptions,
@@ -105,6 +106,33 @@ export async function putPrivate(
     }
 
     throw error;
+  }
+}
+
+/**
+ * Deletes a private blob.
+ *
+ * Reports whether the recording is actually gone rather than throwing, because
+ * every caller is tidying up after something that has already happened and
+ * none of them should fail because storage would not cooperate.
+ *
+ * A pathname that is not there counts as gone: the caller wanted it absent and
+ * it is.
+ */
+export async function deletePrivate(pathname: string): Promise<boolean> {
+  try {
+    await del(pathname);
+    return true;
+  } catch (error) {
+    if (error instanceof BlobNotFoundError) return true;
+
+    console.error('[blob] delete failed', {
+      pathname,
+      kind: error instanceof Error ? error.constructor.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+    });
+
+    return false;
   }
 }
 

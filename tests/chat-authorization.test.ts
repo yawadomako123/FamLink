@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { ApiError } from '@/lib/api/errors';
 import { db } from '@/lib/db';
@@ -20,7 +20,24 @@ import {
 } from '@/lib/chat/service';
 import { listNotifications } from '@/lib/notifications/service';
 import { updatePreferences } from '@/lib/notifications/preferences';
+import { deletePrivate } from '@/lib/blob/store';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
+
+/*
+ * Blob storage is intercepted. Deleting a voice note now has to remove the
+ * recording as well as the row, and whether it did is only observable here —
+ * there is no configured store in a test run, and a real one must not be
+ * touched by the suite.
+ */
+vi.mock('@/lib/blob/store', () => ({
+  deletePrivate: vi.fn(async () => true),
+  putPrivate: vi.fn(async (pathname: string) => ({ pathname })),
+  getPrivate: vi.fn(async () => {
+    throw new Error('not used in these tests');
+  }),
+}));
+
+const deleteBlob = vi.mocked(deletePrivate);
 
 async function expectApiError(promise: Promise<unknown>, status: number) {
   try {
@@ -40,6 +57,8 @@ let outsider: TestUser;
 let familyId: string;
 
 beforeEach(async () => {
+  deleteBlob.mockClear();
+  deleteBlob.mockResolvedValue(true);
   await resetDatabase();
   owner = await createUser('Ama Owner');
   admin = await createUser('Yaw Admin');
@@ -419,5 +438,92 @@ describe('voice note playback addresses', () => {
     // The route resolves a message by id *and* family; nothing belonging to
     // this thread is reachable through another one.
     expect(await listMessages(stranger.id, elsewhere.id)).toHaveLength(0);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Deleting a voice note.
+ *
+ * Deletion only ever set `deleted_at`. The thread stopped showing the message
+ * and the audio endpoint refused it, so it could not be played — but the
+ * recording stayed in the blob store for good, because nothing in the codebase
+ * deleted a blob at all. Somebody who records something in anger, or whose
+ * child records something, and then deletes it, is entitled to read that as
+ * the recording being gone.
+ */
+describe('deleting a voice note', () => {
+  async function sendVoiceNote() {
+    return sendMessage(member.id, familyId, '', {
+      path: 'voice/fam/kofi-abc123',
+      durationMs: 4_000,
+    });
+  }
+
+  it('removes the recording from storage', async () => {
+    const sent = await sendVoiceNote();
+
+    await deleteMessage(member.id, familyId, sent.id);
+
+    expect(deleteBlob).toHaveBeenCalledWith('voice/fam/kofi-abc123');
+  });
+
+  it('drops the pointer once the recording is gone', async () => {
+    const sent = await sendVoiceNote();
+
+    await deleteMessage(member.id, familyId, sent.id);
+
+    const [row] = await db
+      .select({ audioPath: messages.audioPath })
+      .from(messages)
+      .where(eq(messages.id, sent.id));
+
+    expect(row?.audioPath).toBeNull();
+  });
+
+  it('keeps the pointer when storage would not cooperate', async () => {
+    deleteBlob.mockResolvedValue(false);
+    const sent = await sendVoiceNote();
+
+    await deleteMessage(member.id, familyId, sent.id);
+
+    const [row] = await db
+      .select({ audioPath: messages.audioPath, deletedAt: messages.deletedAt })
+      .from(messages)
+      .where(eq(messages.id, sent.id));
+
+    // The message still goes, because that is what was asked for. The pointer
+    // stays so the orphaned recording can still be found and cleaned up.
+    expect(row?.deletedAt).not.toBeNull();
+    expect(row?.audioPath).toBe('voice/fam/kofi-abc123');
+  });
+
+  it('still deletes the message when storage throws', async () => {
+    deleteBlob.mockRejectedValue(new Error('store unreachable'));
+    const sent = await sendVoiceNote();
+
+    // The message disappearing is what the person asked for; it must not
+    // depend on storage being reachable.
+    await expect(deleteMessage(member.id, familyId, sent.id)).resolves.toBeUndefined();
+
+    const visible = await listMessages(member.id, familyId);
+    expect(visible.find((m) => m.id === sent.id)?.deleted).toBe(true);
+  });
+
+  it('touches storage only for messages that have a recording', async () => {
+    const typed = await sendMessage(member.id, familyId, 'just text');
+
+    await deleteMessage(member.id, familyId, typed.id);
+
+    expect(deleteBlob).not.toHaveBeenCalled();
+  });
+
+  it('does not delete a recording when the caller is refused', async () => {
+    const sent = await sendVoiceNote();
+
+    await expectApiError(deleteMessage(outsider.id, familyId, sent.id), 404);
+
+    expect(deleteBlob).not.toHaveBeenCalled();
   });
 });

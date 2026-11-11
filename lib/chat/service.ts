@@ -12,6 +12,7 @@ import {
 import { requireMembership } from '@/lib/permissions/family';
 import { Errors } from '@/lib/api/errors';
 import { publishEvent } from '@/lib/realtime/publish';
+import { deletePrivate } from '@/lib/blob/store';
 import { notifyFamily } from '@/lib/notifications/service';
 
 /**
@@ -320,7 +321,11 @@ export async function deleteMessage(
   const membership = await requireMembership(callerId, familyId);
 
   const [message] = await db
-    .select({ senderId: messages.senderId, deletedAt: messages.deletedAt })
+    .select({
+      senderId: messages.senderId,
+      deletedAt: messages.deletedAt,
+      audioPath: messages.audioPath,
+    })
     .from(messages)
     // Scoped by family as well as id, so a message id from another family
     // cannot be reached.
@@ -339,6 +344,43 @@ export async function deleteMessage(
     .update(messages)
     .set({ deletedAt: new Date(), updatedAt: new Date() })
     .where(and(eq(messages.id, messageId), eq(messages.familyId, familyId)));
+
+  /*
+   * A deleted voice note has to leave storage too.
+   *
+   * Deleting a message only ever set `deleted_at`. The thread stopped showing
+   * it and the audio endpoint refused it, so it could not be played — but the
+   * recording itself stayed in the blob store for good, because nothing in
+   * the codebase deleted a blob at all. Somebody who records something in
+   * anger, or whose child records something, and then deletes it, is entitled
+   * to take that to mean the recording is gone.
+   *
+   * After the row is marked, never before: the message disappearing is what
+   * the person asked for and must not depend on storage cooperating. If the
+   * delete fails the blob is left exactly as unreachable as it is today, and
+   * the pointer is kept so it can still be found and cleaned up.
+   */
+  if (message.audioPath) {
+    /*
+     * Guarded here rather than trusting `deletePrivate` to keep its promise
+     * never to throw. The message has already been marked deleted; letting
+     * anything after that point turn the call into an error would report a
+     * failure for something that plainly succeeded, and the person would
+     * reasonably try again on a message that is already gone.
+     */
+    try {
+      const gone = await deletePrivate(message.audioPath);
+
+      if (gone) {
+        await db
+          .update(messages)
+          .set({ audioPath: null })
+          .where(and(eq(messages.id, messageId), eq(messages.familyId, familyId)));
+      }
+    } catch (error) {
+      console.error('[chat] could not remove a deleted voice note', error);
+    }
+  }
 
   await publishEvent(familyId, 'message');
 }
