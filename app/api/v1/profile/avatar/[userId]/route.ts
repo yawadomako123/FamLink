@@ -43,7 +43,30 @@ export const GET = authedRoute<Params>(async (_req, { params, session }) => {
     if (!shared) throw Errors.notFound('That avatar');
   }
 
-  const { stream, headers } = await getPrivate(`avatars/${userId}`);
+  /*
+   * Any storage failure is reported as "no avatar", not as a server error.
+   *
+   * `getPrivate` rethrows everything except a missing blob, so a store that
+   * was unreachable, suspended or misconfigured turned every `<img>` on every
+   * screen into a 500 — one per member per page, with a stack trace each.
+   * Nothing about that is a server fault the viewer can act on, and FamLink
+   * already treats generated initials as a perfectly good default rather than
+   * a broken state, which is exactly what a 404 here falls back to.
+   *
+   * A voice note deliberately does not do this: telling somebody their
+   * recording is gone when the store is merely unreachable would be a lie
+   * about their own data, and there a 500 is the more honest answer.
+   */
+  let blob: Awaited<ReturnType<typeof getPrivate>>;
+
+  try {
+    blob = await getPrivate(`avatars/${userId}`);
+  } catch {
+    // getPrivate has already logged the detail.
+    throw Errors.notFound('That avatar');
+  }
+
+  const { stream, headers } = blob;
 
   return new NextResponse(stream, {
     headers: {
