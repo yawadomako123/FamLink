@@ -192,11 +192,17 @@ export async function recordLocation(
   /*
    * Low battery is worth telling the family about: a dying phone is the most
    * common reason somebody goes quiet, and knowing that beats watching the map
-   * silently stop updating. Alerted at most once per charge cycle — the mark
-   * clears when the phone climbs back above the threshold.
+   * silently stop updating. Alerted at most once per run-down — the mark
+   * clears once the phone is charging or back above the threshold.
    */
   if (battery) {
-    await maybeAlertLowBattery(userId, familyId, battery.percentage, membership.batteryAlertedAt);
+    await maybeAlertLowBattery(
+      userId,
+      familyId,
+      battery.percentage,
+      battery.isCharging ?? null,
+      membership.batteryAlertedAt,
+    );
   }
 
   // A hint only — listeners re-fetch through the authorized endpoint, so the
@@ -216,11 +222,31 @@ async function maybeAlertLowBattery(
   userId: string,
   familyId: string,
   percentage: number,
+  isCharging: boolean | null,
   alertedAt: Date | null,
 ): Promise<void> {
   try {
-    if (percentage >= BATTERY_RECOVERED_THRESHOLD) {
-      // Charged back up — re-arm for the next time it runs down.
+    /*
+     * Plugged in counts as recovered, as well as being back above the
+     * threshold.
+     *
+     * Percentage alone was not enough. Re-arming required a reading at 30% or
+     * more, and readings only happen while the app is open — a PWA cannot
+     * watch the battery in the background. So a phone that charged overnight
+     * with FamLink closed was never seen above the threshold, the mark stayed
+     * set, and the next run-down went unannounced. Measured: the app saw
+     * `isCharging` at 12%, the phone ran down to 9% the next day, and the
+     * family was told nothing.
+     *
+     * Returning here also stops the alert firing for a phone that is plugged
+     * in. "Their phone may stop updating soon" is the wrong thing to say
+     * about a battery that is on its way up, and the next discharging reading
+     * below the threshold will say it properly.
+     *
+     * `null` means the device did not report — unknown is not charging, so it
+     * must not re-arm on a guess.
+     */
+    if (percentage >= BATTERY_RECOVERED_THRESHOLD || isCharging === true) {
       if (alertedAt) {
         await db
           .update(familyMembers)
