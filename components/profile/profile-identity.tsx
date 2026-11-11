@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Camera, Check, Pencil } from 'lucide-react';
+import { Camera, Check, Pencil, Trash2 } from 'lucide-react';
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -32,6 +32,7 @@ export function ProfileIdentity({
   const [editing, setEditing] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
+  const [removing, setRemoving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [saved, setSaved] = React.useState(false);
 
@@ -95,6 +96,21 @@ export function ProfileIdentity({
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function removeAvatar() {
+    setError(null);
+    setRemoving(true);
+
+    try {
+      await api.delete('/api/v1/profile/avatar');
+      setImage(null);
+      router.refresh();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setRemoving(false);
     }
   }
 
@@ -183,6 +199,27 @@ export function ProfileIdentity({
               </>
             )}
           </div>
+
+          {/*
+            Only once there is a photo to take down, and at the far end of the
+            row rather than beside the camera button, so the destructive
+            control is not the one you hit by aiming badly. FamLink falls back
+            to generated initials, so removing leaves something presentable
+            rather than a hole.
+          */}
+          {uploadsEnabled && image && !editing && (
+            <Button
+              size="sm"
+              variant="ghost"
+              loading={removing}
+              disabled={uploading}
+              onClick={() => void removeAvatar()}
+              className="shrink-0 text-muted hover:text-danger-600"
+            >
+              <Trash2 aria-hidden className="size-3.5" />
+              <span className="hidden sm:inline">Remove photo</span>
+            </Button>
+          )}
         </div>
 
         {uploading && <p className="text-xs text-muted mt-3">Uploading your photo…</p>}

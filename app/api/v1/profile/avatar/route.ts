@@ -1,4 +1,4 @@
-import { putPrivate } from '@/lib/blob/store';
+import { deletePrivate, putPrivate } from '@/lib/blob/store';
 import { eq } from 'drizzle-orm';
 import { authedRoute, ok } from '@/lib/api/handler';
 import { enforceRateLimit } from '@/lib/api/rate-limit';
@@ -63,4 +63,35 @@ export const POST = authedRoute(async (req, { session }) => {
   void blob;
 
   return ok({ image });
+});
+
+/**
+ * DELETE /api/v1/profile/avatar — take the photo down.
+ *
+ * There was no way to do this. A photo could be replaced but never removed,
+ * so somebody who uploaded a picture of their child and thought better of it
+ * had no way back short of uploading something else over the top. For a
+ * family app that is the wrong answer, and it is the same principle as
+ * deleting a voice note: whatever you put in, you can take out.
+ *
+ * The stored reference is cleared first, because that is what the person
+ * asked for and it must not depend on the blob store cooperating. The
+ * recording of the failure is a log line, not an error — the photo is already
+ * unreachable, since the only route to it reads `users.image`.
+ */
+export const DELETE = authedRoute(async (_req, { session }) => {
+  enforceRateLimit('mutation', session.user.id);
+
+  await db
+    .update(users)
+    .set({ image: null, updatedAt: new Date() })
+    .where(eq(users.id, session.user.id));
+
+  try {
+    await deletePrivate(`avatars/${session.user.id}`);
+  } catch (error) {
+    console.error('[avatar] could not remove a deleted photo', error);
+  }
+
+  return ok({ image: null });
 });

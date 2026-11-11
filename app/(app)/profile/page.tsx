@@ -9,6 +9,9 @@ import { SignOutButton } from '@/components/profile/sign-out-button';
 import { requireSession } from '@/lib/auth/session';
 import { resolveShellData } from '@/lib/families/shell';
 import { withSharingExpiry } from '@/lib/location/expiry';
+import { eq } from 'drizzle-orm';
+import { db } from '@/lib/db';
+import { users } from '@/lib/db/schema';
 import { getMembership } from '@/lib/permissions/family';
 import { isAvatarUploadEnabled } from '@/lib/env';
 
@@ -16,6 +19,25 @@ export const metadata: Metadata = { title: 'Profile' };
 
 export default async function ProfilePage() {
   const session = await requireSession('/profile');
+
+  /*
+   * The photo is read from the database, not from the session.
+   *
+   * Sessions are served from a 60-second signed cookie cache (see
+   * lib/auth/index.ts), which is the right trade for "who is this request"
+   * and the wrong one for a value this screen lets you change. Removing a
+   * photo cleared the row and then re-rendered from the cached session, so
+   * the old photo and the Remove button came straight back and stayed for up
+   * to a minute — looking exactly like the removal had failed. Uploading had
+   * the same lag in the other direction.
+   */
+  const [account] = await db
+    .select({ image: users.image })
+    .from(users)
+    .where(eq(users.id, session.user.id))
+    .limit(1);
+
+  const image = account?.image ?? null;
   const { family: current, families, alertCount, unreadMessages } = await resolveShellData(
     session.user.id,
   );
@@ -33,7 +55,7 @@ export default async function ProfilePage() {
 
   return (
     <AppShell
-      user={session.user}
+      user={{ ...session.user, image }}
       familyName={current?.name}
       title="Profile"
       family={current ?? undefined}
@@ -46,7 +68,7 @@ export default async function ProfilePage() {
           userId={session.user.id}
           name={session.user.name}
           email={session.user.email}
-          image={session.user.image ?? null}
+          image={image}
           uploadsEnabled={isAvatarUploadEnabled()}
         />
 
