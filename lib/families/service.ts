@@ -7,6 +7,7 @@ import {
   families,
   familyMembers,
   invitations,
+  memberPlaceStates,
   messageReads,
   users,
   type Family,
@@ -122,11 +123,21 @@ export async function leaveFamily(callerId: string, familyId: string): Promise<v
  * `family_members` — so this is about what comes back, not what leaked while
  * they were away.
  *
- * The history table is deliberately left alone. `stopSharingAndForget` exists
- * precisely because erasing somebody's own records is irreversible and should
- * be an explicit act, and being removed by an admin is not that act. History
- * is unreachable without membership, so nothing is disclosed by keeping it —
- * see the note in lib/location/service.ts.
+ * Geofence state goes for the same reason, and causes a louder failure. It
+ * records whether somebody is inside each place, and the evaluator compares
+ * every new position against it. Somebody who left the family while inside
+ * Home kept an `is_inside` row saying so — and their *first* position after
+ * rejoining, from anywhere else, read as a departure and announced "Kofi
+ * left" to the family. Measured exactly that. It also defeats the rule that a
+ * first fix is recorded silently rather than claiming a transition, because
+ * leftover state makes it look like no first fix.
+ *
+ * The history tables are deliberately left alone — location history and the
+ * family's record of comings and goings. `stopSharingAndForget` exists
+ * precisely because erasing somebody's records is irreversible and should be
+ * an explicit act, and being removed by an admin is not that act. Neither is
+ * reachable without membership, so nothing is disclosed by keeping them.
+ * These two are live state, not history: they say where somebody *is*.
  */
 async function endMembership(familyId: string, userId: string): Promise<void> {
   await db.transaction(async (tx) => {
@@ -137,6 +148,15 @@ async function endMembership(familyId: string, userId: string): Promise<void> {
     await tx
       .delete(currentLocations)
       .where(and(eq(currentLocations.familyId, familyId), eq(currentLocations.userId, userId)));
+
+    await tx
+      .delete(memberPlaceStates)
+      .where(
+        and(
+          eq(memberPlaceStates.familyId, familyId),
+          eq(memberPlaceStates.userId, userId),
+        ),
+      );
   });
 }
 

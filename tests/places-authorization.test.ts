@@ -4,6 +4,8 @@ import {
   acceptInvitation,
   createFamily,
   createInvitation,
+  leaveFamily,
+  removeMember,
 } from '@/lib/families/service';
 import {
   createPlace,
@@ -13,10 +15,11 @@ import {
   listPlaces,
   updatePlace,
 } from '@/lib/places/service';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { memberPlaceStates } from '@/lib/db/schema';
 import { recordLocation, updateSharingSettings } from '@/lib/location/service';
+import { listNotifications } from '@/lib/notifications/service';
 import {
   listPlaceWatches,
   recipientsForPlaceEvent,
@@ -504,5 +507,140 @@ describe('place notification filters', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Geofence state belonging to a membership that ended.
+ *
+ * `member_place_states` hangs off the user, the place and the family — not
+ * the membership — so leaving a family left the row behind. It records
+ * whether somebody is inside each place, and every new position is compared
+ * against it.
+ *
+ * Somebody who left while inside Home therefore kept a row saying so, and
+ * their first position after rejoining — from anywhere at all — read as a
+ * departure and announced it to the family. It also defeats the rule that a
+ * first fix is silent, because leftover state makes it look like no first fix.
+ */
+describe('rejoining a family you left', () => {
+  const HOME_AT = { latitude: 5.6037, longitude: -0.187 };
+  const ELSEWHERE = { latitude: 6.6885, longitude: -1.6244 };
+
+  beforeEach(async () => {
+    await createPlace(owner.id, familyId, { ...HOME, ...HOME_AT, radius: 150 });
+    await updateSharingSettings(member.id, familyId, { state: 'sharing' });
+    await updateSharingSettings(owner.id, familyId, { state: 'sharing' });
+  });
+
+  /** A silent first fix elsewhere, then a genuine arrival at Home. */
+  async function arriveAtHome(userId: string) {
+    await recordLocation(userId, {
+      familyId,
+      ...ELSEWHERE,
+      accuracy: 10,
+      recordedAt: new Date(Date.now()),
+    });
+    await recordLocation(userId, {
+      familyId,
+      ...HOME_AT,
+      accuracy: 10,
+      recordedAt: new Date(Date.now() + 60_000),
+    });
+  }
+
+  async function rejoin(userId: string) {
+    const invite = await createInvitation(owner.id, familyId, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+    await acceptInvitation(userId, invite.code);
+    await updateSharingSettings(userId, familyId, { state: 'sharing' });
+  }
+
+  async function geofenceRowsFor(userId: string) {
+    return db
+      .select({ isInside: memberPlaceStates.isInside })
+      .from(memberPlaceStates)
+      .where(
+        and(
+          eq(memberPlaceStates.familyId, familyId),
+          eq(memberPlaceStates.userId, userId),
+        ),
+      );
+  }
+
+  it('clears the geofence state when they leave', async () => {
+    await arriveAtHome(member.id);
+    expect(await geofenceRowsFor(member.id)).toHaveLength(1);
+
+    await leaveFamily(member.id, familyId);
+
+    expect(await geofenceRowsFor(member.id)).toHaveLength(0);
+  });
+
+  it('clears it when an admin removes them', async () => {
+    await arriveAtHome(member.id);
+
+    await removeMember(owner.id, familyId, member.id);
+
+    expect(await geofenceRowsFor(member.id)).toHaveLength(0);
+  });
+
+  it('does not announce a departure from a place they left months ago', async () => {
+    await arriveAtHome(member.id);
+    await leaveFamily(member.id, familyId);
+    await rejoin(member.id);
+
+    const before = (await listNotifications(owner.id, familyId)).length;
+    // Their first position back, from nowhere near Home.
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.75,
+      longitude: -0.31,
+      accuracy: 10,
+      recordedAt: new Date(Date.now() + 10 * 60_000),
+    });
+
+    const after = await listNotifications(owner.id, familyId);
+    expect(after).toHaveLength(before);
+    expect(after.some((n) => n.title.includes('left'))).toBe(false);
+  });
+
+  it('still announces a real arrival after they rejoin', async () => {
+    await arriveAtHome(member.id);
+    await leaveFamily(member.id, familyId);
+    await rejoin(member.id);
+
+    // A first fix elsewhere is silent, as it is for any new member...
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.75,
+      longitude: -0.31,
+      accuracy: 10,
+      recordedAt: new Date(Date.now() + 10 * 60_000),
+    });
+    // ...and the genuine arrival that follows is not.
+    await recordLocation(member.id, {
+      familyId,
+      latitude: 5.6037,
+      longitude: -0.187,
+      accuracy: 10,
+      recordedAt: new Date(Date.now() + 11 * 60_000),
+    });
+
+    const notes = await listNotifications(owner.id, familyId);
+    expect(notes.some((n) => n.title.includes('arrived'))).toBe(true);
+  });
+
+  it('leaves another member’s geofence state alone', async () => {
+    await arriveAtHome(member.id);
+    await arriveAtHome(owner.id);
+
+    await leaveFamily(member.id, familyId);
+
+    expect(await geofenceRowsFor(owner.id)).toHaveLength(1);
   });
 });
