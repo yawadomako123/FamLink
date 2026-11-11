@@ -35,6 +35,24 @@ import { MAX_CALL_PARTICIPANTS } from './ice';
 /** A ringing call that nobody answers is given up on after this long. */
 const RING_TIMEOUT_MS = 45_000;
 
+/**
+ * An answered call is treated as abandoned after this long.
+ *
+ * Chosen well above any plausible family call rather than tightly, because
+ * the two mistakes are not symmetric: retiring a call that is still happening
+ * cuts people off mid-sentence, while retiring one that ended hours ago
+ * inconveniences nobody.
+ *
+ * **This is a bound, not a fix.** Nothing tells the server that a participant
+ * is still there: `pollSignals` is a read, and signalling goes quiet once the
+ * peers have connected, so a live two-hour call and an abandoned one look
+ * identical from here. The precise answer is a `last_seen_at` on
+ * `call_participants`, touched as each peer polls, which would let an
+ * abandoned call be retired in seconds instead of hours. That needs a schema
+ * change, so until then this caps the damage rather than removing it.
+ */
+const ABANDONED_CALL_MS = 4 * 60 * 60 * 1000;
+
 export interface CallView {
   id: string;
   familyId: string;
@@ -393,7 +411,7 @@ export async function getActiveCall(
 
   // Before looking: anything that has been ringing too long is not a live
   // call, and must not be able to hide behind a newer one.
-  await retireStaleRinging(familyId);
+  await retireStaleCalls(familyId);
 
   /*
    * Scoped to calls this member is a participant of.
@@ -424,7 +442,7 @@ export async function getActiveCall(
 }
 
 /**
- * Retires every call left ringing past the timeout.
+ * Retires every call the family has stopped having.
  *
  * This used to be done to one call only — whichever `getActiveCall` happened
  * to pick, which is the newest ringing or active one for that member. Any
@@ -442,27 +460,53 @@ export async function getActiveCall(
  * module is careful about elsewhere because they are the only place SDP
  * lingers. A call that was never retired kept its own indefinitely.
  */
-async function retireStaleRinging(familyId: string): Promise<void> {
-  const retired = await db
-    .update(calls)
-    .set({ status: 'missed', endedAt: new Date() })
-    .where(
-      and(
-        eq(calls.familyId, familyId),
-        eq(calls.status, 'ringing'),
-        lt(calls.startedAt, new Date(Date.now() - RING_TIMEOUT_MS)),
-      ),
-    )
-    .returning({ id: calls.id });
+async function retireStaleCalls(familyId: string): Promise<void> {
+  const now = Date.now();
 
+  const [missed, abandoned] = await Promise.all([
+    db
+      .update(calls)
+      .set({ status: 'missed', endedAt: new Date() })
+      .where(
+        and(
+          eq(calls.familyId, familyId),
+          eq(calls.status, 'ringing'),
+          lt(calls.startedAt, new Date(now - RING_TIMEOUT_MS)),
+        ),
+      )
+      .returning({ id: calls.id }),
+
+    /*
+     * Answered, and then everybody's browser went away without hanging up — a
+     * locked phone, a killed tab, a dropped network. `leaveCall` never ran, so
+     * the call stayed `active` for ever.
+     *
+     * That is not merely untidy. `getActiveCall` kept offering it, and
+     * `startCall` joins an existing call rather than starting a rival one — so
+     * the family's call button silently joined a call nobody was on, and there
+     * was no way to start a real one. The signalling stayed too, which is the
+     * only place SDP lives, and SDP carries the participants' IP addresses.
+     *
+     * Ends as `ended` rather than `missed`: it was answered, and the history
+     * should not claim otherwise.
+     */
+    db
+      .update(calls)
+      .set({ status: 'ended', endedAt: new Date() })
+      .where(
+        and(
+          eq(calls.familyId, familyId),
+          eq(calls.status, 'active'),
+          lt(calls.startedAt, new Date(now - ABANDONED_CALL_MS)),
+        ),
+      )
+      .returning({ id: calls.id }),
+  ]);
+
+  const retired = [...missed, ...abandoned].map((row) => row.id);
   if (retired.length === 0) return;
 
-  await db.delete(callSignals).where(
-    inArray(
-      callSignals.callId,
-      retired.map((row) => row.id),
-    ),
-  );
+  await db.delete(callSignals).where(inArray(callSignals.callId, retired));
 }
 
 async function loadParticipants(callId: string) {

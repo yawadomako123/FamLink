@@ -650,3 +650,111 @@ describe('a call left ringing', () => {
     expect(await statusOf(unanswered.id)).toBe('ringing');
   });
 });
+
+/* ========================================================================== */
+
+/** Drags an answered call's start into the past. */
+async function ageOutAnswered(callId: string, hoursAgo: number) {
+  const at = new Date(Date.now() - hoursAgo * 60 * 60 * 1000);
+  await db.update(calls).set({ startedAt: at, answeredAt: at }).where(eq(calls.id, callId));
+}
+
+/**
+ * A call everybody walked away from without hanging up.
+ *
+ * A locked phone, a killed tab, a dropped network — `leaveCall` never runs and
+ * the call stays `active` for ever. The leftover row is the least of it:
+ * `getActiveCall` kept offering it, and `startCall` joins an existing call
+ * rather than starting a rival one, so the family's call button silently
+ * joined a call nobody was on and there was no way to start a real one.
+ */
+describe('a call that was abandoned rather than ended', () => {
+  it('is retired once it is far past any real call', async () => {
+    const call = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, call.id);
+    await ageOutAnswered(call.id, 6);
+
+    await getActiveCall(member.id, familyId);
+
+    const [row] = await db
+      .select({ status: calls.status })
+      .from(calls)
+      .where(eq(calls.id, call.id));
+
+    expect(row?.status).toBe('ended');
+  });
+
+  it('is recorded as ended, not missed', async () => {
+    // Somebody answered it. The history should not say otherwise.
+    const call = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, call.id);
+    await ageOutAnswered(call.id, 6);
+
+    await getActiveCall(member.id, familyId);
+    const history = await listRecentCalls(member.id, familyId);
+
+    expect(history.find((c) => c.id === call.id)?.status).toBe('ended');
+  });
+
+  it('stops being offered as a call in progress', async () => {
+    const call = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, call.id);
+    await ageOutAnswered(call.id, 6);
+
+    expect(await getActiveCall(member.id, familyId)).toBeNull();
+  });
+
+  it('lets somebody start a real call again', async () => {
+    /*
+     * The symptom that actually hurt: `startCall` joins an existing call
+     * rather than starting a rival one, so while the ghost stood nobody could
+     * place a new call at all.
+     */
+    const ghost = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, ghost.id);
+    await ageOutAnswered(ghost.id, 6);
+
+    const fresh = await startCall(owner.id, familyId, 'audio');
+
+    expect(fresh.id).not.toBe(ghost.id);
+    expect(fresh.status).toBe('ringing');
+  });
+
+  it('takes the signalling with it, which is where SDP lives', async () => {
+    const call = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, call.id);
+    await sendSignal(owner.id, familyId, call.id, {
+      kind: 'offer',
+      toUserId: member.id,
+      payload: { sdp: 'v=0 candidate 192.168.1.42 typ host' },
+    });
+    await ageOutAnswered(call.id, 6);
+
+    await getActiveCall(member.id, familyId);
+
+    const left = await db
+      .select({ id: callSignals.id })
+      .from(callSignals)
+      .where(eq(callSignals.callId, call.id));
+
+    // SDP carries the participants' IP addresses; it must not outlive the call.
+    expect(left).toHaveLength(0);
+  });
+
+  it('leaves a call that is merely long alone', async () => {
+    const call = await startCall(owner.id, familyId, 'audio');
+    await joinCall(member.id, familyId, call.id);
+    // An hour in, and still going. Cutting this off mid-sentence would be a
+    // far worse failure than tidying up late.
+    await ageOutAnswered(call.id, 1);
+
+    await getActiveCall(member.id, familyId);
+
+    const [row] = await db
+      .select({ status: calls.status })
+      .from(calls)
+      .where(eq(calls.id, call.id));
+
+    expect(row?.status).toBe('active');
+  });
+});
