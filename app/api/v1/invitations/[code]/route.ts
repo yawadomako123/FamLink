@@ -14,6 +14,11 @@ export const dynamic = 'force-dynamic';
  *
  * Reveals only the family name, who invited you and the member count — enough
  * to decide whether to accept, nothing about where anyone is.
+ *
+ * Rate limiting lives in  rather than here, because the
+ * /join page renders the same preview server-side without passing through
+ * this route — a limit applied only here would guard the quieter of the two
+ * doors.
  */
 export const GET = authedRoute<{ code: string }>(async (_req, { params, session }) => {
   const { code } = await params;

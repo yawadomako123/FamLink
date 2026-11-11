@@ -15,6 +15,7 @@ import {
   type FamilyRole,
 } from '@/lib/db/schema';
 import { DomainErrors, Errors } from '@/lib/api/errors';
+import { enforceRateLimit } from '@/lib/api/rate-limit';
 import { getMembership, requireMembership, requireRole } from '@/lib/permissions/family';
 import {
   generateInvitationCode,
@@ -348,6 +349,25 @@ export async function previewInvitation(
   viewerId: string,
   code: string,
 ): Promise<InvitationPreview> {
+  /*
+   * Rate limited here rather than in the route.
+   *
+   * A code's safety is described above as resting on entropy, expiry, single
+   * use *and* rate limiting, and this was the path where the last of those
+   * was missing. Guessing is the cheap, repeatable half of the attack;
+   * redeeming is the expensive half. Only the accept route was metered, so
+   * the probe ran unbounded and an attacker who found a live code needed
+   * exactly one accept to spend it.
+   *
+   * In the service because there are two doors: the API route, and the /join
+   * page, which renders this server-side without going through the route at
+   * all. A limit in the route would have guarded the quieter one. Forty bits
+   * puts brute force out of reach by itself — this makes the stated model the
+   * implemented one, and makes automated probing show up as refusals rather
+   * than as nothing at all.
+   */
+  enforceRateLimit('invitation', viewerId);
+
   const [row] = await db
     .select({
       familyId: invitations.familyId,

@@ -15,6 +15,7 @@ import {
 } from '@/lib/families/service';
 import { listFamilyInvitations, listFamilyMembers } from '@/lib/families/queries';
 import { getMembership } from '@/lib/permissions/family';
+import { RATE_LIMITS, __resetRateLimits } from '@/lib/api/rate-limit';
 import { closeDatabase, createUser, resetDatabase, type TestUser } from './helpers/factories';
 
 /**
@@ -52,6 +53,9 @@ let member: TestUser;
 let outsider: TestUser;
 
 beforeEach(async () => {
+  // Rate limiting is in-process and survives a database reset, so without
+  // this the buckets would carry over between cases.
+  __resetRateLimits();
   await resetDatabase();
   owner = await createUser('Kofi Owner');
   admin = await createUser('Ama Admin');
@@ -512,5 +516,82 @@ describe('family count ceiling', () => {
     });
 
     await expectApiError(acceptInvitation(joiner.id, invite.code), 409);
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * Guessing at invitation codes.
+ *
+ * A code is the only credential needed to join a family, and its safety is
+ * described as resting on entropy, expiry, single use *and* rate limiting.
+ * The last of those was missing from the half an attacker would actually use:
+ * `acceptInvitation` was metered through its route, and previewing a code was
+ * not metered at all. Guessing is the cheap, repeatable half; redeeming is the
+ * expensive half. Someone could hunt for a live code as fast as the network
+ * allowed and then spend a single accept on it.
+ *
+ * Forty bits puts brute force out of reach on its own. This is about the
+ * stated model being the implemented one, and about automated probing
+ * producing refusals rather than silence.
+ */
+describe('probing invitation codes', () => {
+  it('stops a caller working through codes unmetered', async () => {
+    const { limit } = RATE_LIMITS.invitation;
+
+    // Every one of these is a miss, which is what guessing looks like.
+    for (let i = 0; i < limit; i += 1) {
+      await expectApiError(previewInvitation(outsider.id, 'AAAA2345'), 404, 'NOT_FOUND');
+    }
+
+    await expectApiError(previewInvitation(outsider.id, 'AAAA2345'), 429, 'RATE_LIMITED');
+  });
+
+  it('counts a miss, so failures cannot be made for free', async () => {
+    // The opposite would be the useful bug: metering only successful lookups
+    // leaves the search itself unbounded.
+    for (let i = 0; i < RATE_LIMITS.invitation.limit; i += 1) {
+      await expectApiError(previewInvitation(outsider.id, 'ZZZZ9876'), 404, 'NOT_FOUND');
+    }
+
+    const family = await createFamily(owner.id, 'The Boatengs');
+    const invite = await createInvitation(owner.id, family.id, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+
+    await expectApiError(previewInvitation(outsider.id, invite.code), 429, 'RATE_LIMITED');
+  });
+
+  it('meters each caller separately', async () => {
+    for (let i = 0; i < RATE_LIMITS.invitation.limit; i += 1) {
+      await expectApiError(previewInvitation(outsider.id, 'AAAA2345'), 404, 'NOT_FOUND');
+    }
+
+    // One exhausted bucket must not lock out everybody else's invitations.
+    const family = await createFamily(owner.id, 'The Boatengs');
+    const invite = await createInvitation(owner.id, family.id, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+
+    const preview = await previewInvitation(member.id, invite.code);
+    expect(preview.familyName).toBe('The Boatengs');
+  });
+
+  it('leaves ordinary use well clear of the limit', async () => {
+    const family = await createFamily(owner.id, 'The Boatengs');
+    const invite = await createInvitation(owner.id, family.id, {
+      role: 'member',
+      expiresInHours: 24,
+    });
+
+    // Opening the link, a couple of refreshes, then accepting.
+    for (let i = 0; i < 5; i += 1) {
+      await previewInvitation(member.id, invite.code);
+    }
+
+    await expect(acceptInvitation(member.id, invite.code)).resolves.toBeDefined();
   });
 });
