@@ -20,6 +20,9 @@ const clients: {
   ended: boolean;
 }[] = [];
 
+/** Set to make the next fake client fail at the named step. */
+const failAt: { connect: boolean; listen: boolean } = { connect: false, listen: false };
+
 vi.mock('pg', () => ({
   Client: class {
     handlers = new Map<string, (arg: unknown) => void>();
@@ -36,10 +39,12 @@ vi.mock('pg', () => ({
     }
 
     async connect() {
+      if (failAt.connect) throw new Error('connection refused');
       this.connected = true;
     }
 
     async query() {
+      if (failAt.listen) throw new Error('LISTEN refused');
       return { rows: [] };
     }
 
@@ -86,6 +91,8 @@ async function freshHub() {
 
 afterEach(() => {
   clients.length = 0;
+  failAt.connect = false;
+  failAt.listen = false;
 });
 
 /* ========================================================================== */
@@ -290,5 +297,62 @@ describe('isRealtimeEvent', () => {
     ]) {
       expect(isRealtimeEvent(bad), `${JSON.stringify(bad)} must be refused`).toBe(false);
     }
+  });
+});
+
+/* ========================================================================== */
+
+/**
+ * A listener that cannot be established.
+ *
+ * `connect()` succeeding and `LISTEN` then failing is the awkward case: the
+ * connection is live, but `hub.client` was never assigned, so nothing can
+ * reach it. `disconnectIfIdle` looks at `hub.client`; the drop handlers bail
+ * out on `hub.client !== client`. One stranded Postgres connection per
+ * occurrence, for the life of the process — against the same connection
+ * budget this module shares a single listener to protect.
+ */
+describe('when the listener cannot be set up', () => {
+  it('closes a connection it opened but could not LISTEN on', async () => {
+    const { subscribeToFamily } = await freshHub();
+    failAt.listen = true;
+
+    await expect(subscribeToFamily('fam-1', () => {})).rejects.toThrow();
+
+    const client = clients.at(-1);
+    expect(client?.connected, 'the connection was opened').toBe(true);
+    expect(client?.ended, 'and must not be left open with nothing holding it').toBe(true);
+  });
+
+  it('leaves no subscriber registered', async () => {
+    const { subscribeToFamily, subscriberCount } = await freshHub();
+    failAt.listen = true;
+
+    await expect(subscribeToFamily('fam-1', () => {})).rejects.toThrow();
+
+    expect(subscriberCount()).toBe(0);
+  });
+
+  it('lets the next subscriber try again', async () => {
+    const mod = await freshHub();
+    failAt.listen = true;
+    await expect(mod.subscribeToFamily('fam-1', () => {})).rejects.toThrow();
+
+    // A failed attempt must not leave the hub believing it is connected, or
+    // every later subscriber would silently receive nothing.
+    failAt.listen = false;
+    const seen: RealtimeEvent[] = [];
+    await mod.subscribeToFamily('fam-1', (e) => seen.push(e));
+    emit(event('fam-1'));
+
+    expect(seen).toHaveLength(1);
+  });
+
+  it('reports a refused connection rather than swallowing it', async () => {
+    const { subscribeToFamily, subscriberCount } = await freshHub();
+    failAt.connect = true;
+
+    await expect(subscribeToFamily('fam-1', () => {})).rejects.toThrow();
+    expect(subscriberCount()).toBe(0);
   });
 });

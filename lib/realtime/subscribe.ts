@@ -129,8 +129,29 @@ async function ensureConnected(): Promise<void> {
 
     client.on('end', () => drop('listen connection ended'));
 
-    await client.connect();
-    await client.query(`LISTEN ${REALTIME_CHANNEL}`);
+    /*
+     * Closed if either step fails, which is not the same as not opening it.
+     *
+     * `connect()` succeeding and `LISTEN` then failing left a live Postgres
+     * connection with nothing referring to it: `hub.client` was never
+     * assigned, so `disconnectIfIdle` could not find it and the drop handlers
+     * bail out on `hub.client !== client`. Nothing else held a reference. Each
+     * occurrence stranded one connection for the life of the process, against
+     * a Neon budget this module already goes out of its way to protect by
+     * sharing a single listener.
+     *
+     * `end()` on a client that never connected is harmless, so both steps can
+     * sit inside the same guard.
+     */
+    try {
+      await client.connect();
+      await client.query(`LISTEN ${REALTIME_CHANNEL}`);
+    } catch (error) {
+      // The 'end' handler sees hub.client !== client and returns, so this
+      // cannot recurse back into drop().
+      await client.end().catch(() => {});
+      throw error;
+    }
 
     hub.client = client;
   })();
